@@ -218,6 +218,19 @@ tr:hover td{background:var(--cream);}
 </head>
 <body>
 
+<!-- GOOGLE LOGIN SCREEN（Firebase Authentication） -->
+<div class="login-screen" id="google-login-screen" style="z-index:10000;display:none;">
+  <div class="login-box">
+    <div class="login-logo">BIJOU <span>Manager</span></div>
+    <div class="login-sub">JEWELLERY MANAGEMENT SYSTEM</div>
+    <div style="font-size:28px;margin-bottom:16px;">🔐</div>
+    <p id="google-login-msg" style="font-size:13px;color:var(--charcoal-light);margin-bottom:20px;">Googleアカウントでログインしてください</p>
+    <div class="login-error" id="google-login-error"></div>
+    <button class="btn btn-gold" onclick="googleLogin()" style="width:100%;justify-content:center;padding:12px;font-size:14px;">Googleでログイン</button>
+    <button class="btn btn-outline btn-sm" id="google-switch-btn" onclick="googleLogout(true)" style="display:none;width:100%;justify-content:center;margin-top:10px;">別のアカウントでログイン</button>
+  </div>
+</div>
+
 <!-- LOGIN SCREEN -->
 <div class="login-screen" id="login-screen">
   <div class="login-box">
@@ -243,6 +256,7 @@ tr:hover td{background:var(--cream);}
   <div class="header-logo">BIJOU <span>Manager</span> <span id="app-version" style="font-size:10px;font-weight:400;color:var(--muted);letter-spacing:0;margin-left:6px;vertical-align:middle;"></span></div>
   <div class="header-right">
     <span id="cloud-status" style="font-size:10px;color:var(--muted);">接続中...</span>
+    <span id="auth-user" style="font-size:10px;color:var(--muted);cursor:pointer;" onclick="googleLogout()" title="ログアウト"></span>
     <span id="pending-order-badge" style="display:none;font-size:10px;background:#C25C5C;color:white;padding:3px 9px;border-radius:10px;cursor:pointer;white-space:nowrap;" onclick="dismissPendingOrderBadge()" title="クリックで消す">⚠️ 未確定のオーダー表があります</span>
     <nav class="nav">
       <button class="nav-btn active" onclick="showPanel('products',this)">商品</button>
@@ -1848,11 +1862,13 @@ tr:hover td{background:var(--cream);}
 <script type="module">
 // ===== バージョン情報 =====
 // 新しく書き出す(出力する)たびに、日付を YYYY.MM.DD 形式で更新してください
-const APP_VERSION = 'v2026.08.06-63';
+const APP_VERSION = 'v2026.10.23-64';
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc, onSnapshot, writeBatch, getDoc }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCMxMIWIniOZ8pngqwq4YhmEQ4tTZfZYSI",
@@ -1866,6 +1882,48 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+
+// ===== Googleログイン（Firebase Authentication） =====
+// データはFirestoreのセキュリティルールで「許可したGoogleアカウントだけ」に制限する。
+const auth = getAuth(app);
+
+function showGoogleLogin(errMsg, showSwitch) {
+  document.getElementById('google-login-screen').style.display = 'flex';
+  const err = document.getElementById('google-login-error');
+  err.textContent = errMsg || '';
+  err.style.display = errMsg ? 'block' : 'none';
+  document.getElementById('google-switch-btn').style.display = showSwitch ? 'flex' : 'none';
+}
+
+function waitForGoogleLogin() {
+  return new Promise(resolve => {
+    const unsub = onAuthStateChanged(auth, user => {
+      if (!user) { showGoogleLogin(); return; }
+      unsub();
+      document.getElementById('google-login-screen').style.display = 'none';
+      const el = document.getElementById('auth-user');
+      if (el) el.textContent = user.email + ' ⏻';
+      resolve(user);
+    });
+  });
+}
+
+async function googleLogin() {
+  try {
+    await signInWithPopup(auth, new GoogleAuthProvider());
+  } catch(e) {
+    if (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') return;
+    showGoogleLogin('ログインできませんでした（' + e.code + '）');
+  }
+}
+
+async function googleLogout(skipConfirm) {
+  if (!skipConfirm && !confirm('ログアウトしますか？')) return;
+  await signOut(auth);
+  location.reload();
+}
+window.googleLogin = googleLogin;
+window.googleLogout = googleLogout;
 
 // ===== DATA =====
 let products = [];
@@ -1982,6 +2040,12 @@ async function initFirebase() {
     updatePendingOrderBadge();
   } catch(e) {
     console.warn('Firebase error:',e);
+    if (e && e.code === 'permission-denied') {
+      // ログインしたアカウントに権限がない（ローカルの古いデータは表示しない）
+      showGoogleLogin('このアカウント（' + (auth.currentUser?.email || '') + '）には利用する権限がありません。', true);
+      showStatus('権限がありません','error');
+      return;
+    }
     products = JSON.parse(localStorage.getItem('bijou_products')||'[]');
     history = JSON.parse(localStorage.getItem('bijou_history')||'[]');
     guaranteeRecords = JSON.parse(localStorage.getItem('bijou_guarantee_records')||'[]');
@@ -9784,8 +9848,8 @@ document.addEventListener('DOMContentLoaded', ()=>{
   const excelInput = document.getElementById('excel-file');
   if (excelInput) excelInput.addEventListener('change', function() { importExcel(this); });
 
-  // Firebaseを初期化してからパスワードチェック
-  initFirebase().then(() => {
+  // Googleログイン → Firebaseを初期化 → パスワードチェック
+  waitForGoogleLogin().then(() => initFirebase()).then(() => {
     // Firebaseのパスワードを最優先（全端末で統一）
     const appPw = settings.appPassword || '';
     // ローカルにも同期して次回ログインを高速化
