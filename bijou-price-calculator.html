@@ -423,6 +423,7 @@ canvas { max-width: 100%; }
       <div style="margin-left:auto;display:flex;gap:8px;">
         <button class="btn btn-outline btn-sm" onclick="addProduct()">＋ 商品追加</button>
         <button class="btn btn-outline btn-sm" onclick="document.getElementById('import-products-file').click()">📂 Excelから読込</button>
+        <button class="btn btn-outline btn-sm" onclick="openDeliveryImport()" style="color:#2E7BB5;border-color:#2E7BB5;" title="納品書アプリの最新の納品書から、グラム数・制作費・石代・パーツ代を取り込みます">📦 納品書から取込</button>
         <input type="file" id="import-products-file" accept=".xlsx" style="display:none" onchange="importProducts(this)">
       </div>
     </div>
@@ -4447,7 +4448,9 @@ function waitForLogin() {
 
 async function cloudLogin() {
   try {
-    await fbAuth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+    const provider = new firebase.auth.GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' }); // 毎回アカウントを選べるようにする
+    await fbAuth.signInWithPopup(provider);
   } catch(e) {
     if (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') return;
     showGoogleLogin('ログインできませんでした（' + e.code + '）');
@@ -4613,6 +4616,192 @@ async function startCloud() {
 }
 window.cloudLogin = cloudLogin;
 window.cloudLogout = cloudLogout;
+
+// ===== 納品書アプリから原価を取り込む =====
+// 納品書アプリ（delivery_history）の最新の納品書から、型番ごとに
+// グラム数・制作費・石代・パーツ代を読み、価格アプリの数字と違う商品だけを一覧にする。
+// 反映するのはチェックを付けた商品だけ。原価は「今の相場設定」で計算し直す。
+let _diCandidates = [];
+
+function diNormCode(c) {
+  return String(c || '').trim().toUpperCase().replace(/[‐－―ー−]/g, '-').replace(/\s+/g, '');
+}
+
+// 「2026年10月16日 / 2026年10月07日」のような文字から、いちばん新しい日付を YYYY-MM-DD で返す
+function diDate(str) {
+  const ds = String(str || '').match(/\d{4}年\d{1,2}月\d{1,2}日/g) || [];
+  return ds.map(d => {
+    const m = d.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
+    return m[1] + '-' + m[2].padStart(2, '0') + '-' + m[3].padStart(2, '0');
+  }).sort().pop() || '';
+}
+
+function diCostOf(p, override) {
+  const q = Object.assign({}, p, override || {});
+  calcProduct(q);
+  return q;
+}
+
+function diShowModal(html) {
+  let el = document.getElementById('di-modal');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'di-modal';
+    el.style.cssText = 'position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;padding:16px;';
+    document.body.appendChild(el);
+  }
+  el.innerHTML = '<div style="background:#fff;border-radius:12px;max-width:1100px;width:100%;max-height:90vh;overflow:auto;padding:20px 22px;">' + html + '</div>';
+  el.style.display = 'flex';
+}
+function diCloseModal() { const el = document.getElementById('di-modal'); if (el) el.style.display = 'none'; }
+
+async function openDeliveryImport() {
+  if (!_cloudReady) { toast('クラウドに接続してから使ってください'); return; }
+  diShowModal('<p style="font-size:13px;">納品書のデータを読み込み中…</p>');
+  try {
+    const results = await Promise.all([
+      fbDb.collection('delivery_history').get(),
+      fbDb.collection('saka_settings').doc('main').get(),
+    ]);
+    const snap = results[0], settingsDoc = results[1];
+    const alias = {};
+    const rawAlias = (settingsDoc.exists && settingsDoc.data().aliasTable) || {};
+    Object.keys(rawAlias).forEach(k => { alias[diNormCode(k)] = diNormCode(rawAlias[k]); });
+
+    // 型番ごとに、いちばん新しい納品書の行を探す
+    const latest = {};
+    snap.forEach(doc => {
+      const e = doc.data();
+      (e.rows || []).forEach(r => {
+        if (r.isRepair || r.isCorrection || r.isLinkedAway) return;
+        if (!(r.costTotal > 0) || !(r.metalGrams > 0)) return;
+        let code = diNormCode(r.sakaModel);
+        if (!code) return;
+        code = alias[code] || code;
+        const date = diDate(r._inv_date || e.date);
+        const order = date + '|' + (e.savedAt || '');
+        if (!latest[code] || latest[code].order < order) {
+          latest[code] = { order, date, slip: r._slip_no || e.slip_no || '', row: r };
+        }
+      });
+    });
+
+    const byCode = {};
+    products.forEach((p, i) => { const c = diNormCode(p.codeFull); if (c && !(c in byCode)) byCode[c] = i; });
+
+    const candidates = [];
+    const unmatched = [];
+    Object.keys(latest).forEach(code => {
+      const L = latest[code], r = L.row;
+      if (!(code in byCode)) { unmatched.push(code + '（' + L.date + '）'); return; }
+      const i = byCode[code], p = products[i];
+      const next = {
+        gram:  Math.round((parseFloat(r.metalGrams) || 0) * 100) / 100,
+        make:  Math.round(parseFloat(r.makingUnit) || 0),
+        gem:   Math.round(parseFloat(r.looseAmount) || 0),
+        parts: Math.round(parseFloat(r.partsAmount) || 0),
+      };
+      const diffs = {};
+      if (Math.abs((parseFloat(p.gram) || 0) - next.gram) > 0.005) diffs.gram = true;
+      // 納品書側が 0 のときは今の数字を残す（石やパーツが別の行に分かれていることがあるため）
+      ['make', 'gem', 'parts'].forEach(f => { if (next[f] > 0 && Math.abs((parseFloat(p[f]) || 0) - next[f]) >= 1) diffs[f] = true; });
+      if (Object.keys(diffs).length === 0) return;
+      const before = diCostOf(p), after = diCostOf(p, next);
+      const conf = parseFloat(p.confirmedPrice) || 0;
+      candidates.push({
+        i, code: p.codeFull, name: p.name || '', size: String(r.size || '').replace(/^#/, ''), date: L.date, slip: L.slip,
+        cur: { gram: parseFloat(p.gram) || 0, make: parseFloat(p.make) || 0, gem: parseFloat(p.gem) || 0, parts: parseFloat(p.parts) || 0 },
+        next, diffs,
+        costBefore: before.cost, costAfter: after.cost,
+        confirmed: conf,
+        rateBefore: conf ? before.cost / conf * 100 : null,
+        rateAfter:  conf ? after.cost / conf * 100 : null,
+      });
+    });
+    candidates.sort((a, b) => (b.rateAfter || 0) - (a.rateAfter || 0));
+    _diCandidates = candidates;
+    renderDeliveryImport(Object.keys(latest).length, unmatched);
+  } catch(e) {
+    diCloseModal();
+    handleCloudError(e, '納品書の読み込みに失敗');
+  }
+}
+
+function renderDeliveryImport(totalCodes, unmatched) {
+  const yen = n => Math.round(n).toLocaleString();
+  const cell = (c, f, fmt) => c.diffs[f]
+    ? '<span style="color:#999;">' + fmt(c.cur[f]) + '</span> → <b>' + fmt(c.next[f]) + '</b>'
+    : '<span style="color:#bbb;">' + fmt(c.cur[f]) + '</span>';
+  const g = n => (Math.round(n * 100) / 100) + 'g';
+  const rateCell = c => {
+    if (c.rateAfter === null) return '<span style="color:#bbb;">確定価格なし</span>';
+    const color = c.rateAfter > 40 ? '#C25C5C' : c.rateAfter > 35 ? '#B8860B' : '#2D5E3A';
+    return c.rateBefore.toFixed(1) + '% → <b style="color:' + color + ';">' + c.rateAfter.toFixed(1) + '%</b>';
+  };
+
+  let html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">'
+    + '<div style="font-size:16px;font-weight:600;">📦 納品書から原価を取り込む</div>'
+    + '<button class="btn btn-outline btn-sm" onclick="diCloseModal()">閉じる</button></div>'
+    + '<p style="font-size:12px;color:#666;margin-bottom:12px;">納品書にある ' + totalCodes + ' 型番のうち、価格アプリの数字と違う <b>' + _diCandidates.length + '</b> 件です。'
+    + 'チェックした商品だけを反映します。原価は今の相場設定で計算し直します。<br>'
+    + '※ リングは号数によってグラム数が変わるので、<b>号数が付いている行は最初はチェックを外しています</b>。標準サイズのものだけチェックしてください。<br>'
+    + '※ 納品書で石代・パーツ代が 0 のときは、今の数字をそのまま残します。</p>';
+
+  if (_diCandidates.length === 0) {
+    html += '<p style="font-size:13px;">取り込みが必要な商品はありません ✅</p>';
+  } else {
+    html += '<div style="margin-bottom:8px;display:flex;gap:6px;">'
+      + '<button class="btn btn-outline btn-sm" onclick="diCheckAll(true)">すべて選ぶ</button>'
+      + '<button class="btn btn-outline btn-sm" onclick="diCheckAll(false)">すべて外す</button></div>'
+      + '<table style="width:100%;border-collapse:collapse;font-size:11px;">'
+      + '<tr style="background:#f5f2ea;text-align:left;"><th style="padding:6px;"></th><th>型番・商品名</th><th>納品日</th><th>号数</th>'
+      + '<th>グラム</th><th>制作費</th><th>石代</th><th>パーツ代</th><th>原価</th><th>確定価格での原価率</th></tr>';
+    _diCandidates.forEach((c, k) => {
+      html += '<tr style="border-top:1px solid #eee;">'
+        + '<td style="padding:6px;"><input type="checkbox" class="di-check" data-k="' + k + '"' + (c.size ? '' : ' checked') + '></td>'
+        + '<td><b>' + c.code + '</b><br><span style="color:#888;">' + c.name + '</span></td>'
+        + '<td>' + c.date + '</td>'
+        + '<td>' + (c.size ? c.size + '号' : '-') + '</td>'
+        + '<td>' + cell(c, 'gram', g) + '</td>'
+        + '<td>' + cell(c, 'make', yen) + '</td>'
+        + '<td>' + cell(c, 'gem', yen) + '</td>'
+        + '<td>' + cell(c, 'parts', yen) + '</td>'
+        + '<td>' + yen(c.costBefore) + ' → <b>' + yen(c.costAfter) + '</b></td>'
+        + '<td>' + rateCell(c) + '</td></tr>';
+    });
+    html += '</table>'
+      + '<div style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end;">'
+      + '<button class="btn btn-outline btn-sm" onclick="diCloseModal()">キャンセル</button>'
+      + '<button class="btn btn-gold btn-sm" onclick="applyDeliveryImport()">✅ チェックした商品を反映</button></div>';
+  }
+  if (unmatched.length) {
+    html += '<details style="margin-top:14px;font-size:11px;color:#888;"><summary>価格アプリに見つからなかった型番（' + unmatched.length + '件）</summary>'
+      + '<p style="margin-top:6px;line-height:1.7;">' + unmatched.join('、') + '</p></details>';
+  }
+  diShowModal(html);
+}
+
+function diCheckAll(on) { document.querySelectorAll('.di-check').forEach(el => { el.checked = on; }); }
+
+function applyDeliveryImport() {
+  const picked = [...document.querySelectorAll('.di-check')].filter(el => el.checked).map(el => _diCandidates[+el.dataset.k]);
+  if (picked.length === 0) { toast('チェックした商品がありません'); return; }
+  if (!confirm(picked.length + ' 件の商品に、納品書の数字を反映しますか？')) return;
+  saveUndo();
+  picked.forEach(c => {
+    const p = products[c.i];
+    Object.keys(c.diffs).forEach(f => { p[f] = c.next[f]; });
+    p.deliveryRef = { date: c.date, slip: c.slip };
+  });
+  calcAll();
+  diCloseModal();
+  toast(picked.length + ' 件に納品書の数字を反映しました（↩ で元に戻せます）');
+}
+
+window.openDeliveryImport = openDeliveryImport;
+window.diCloseModal = diCloseModal;
+window.diCheckAll = diCheckAll;
+window.applyDeliveryImport = applyDeliveryImport;
 
 // ===== INIT =====
 let _hasLocal = false;
