@@ -357,37 +357,64 @@ canvas { max-width: 100%; }
       <div style="margin-bottom:8px;">
         <a href="https://gold.tanaka.co.jp/commodity/souba/index.php" target="_blank" style="color:var(--gold-dark);font-size:11px;">📊 田中貴金属相場を確認 →</a>
       </div>
+      <div style="display:flex;flex-wrap:wrap;gap:14px;align-items:center;font-size:12px;margin-bottom:8px;padding:10px 12px;background:#FFF8E8;border-radius:8px;">
+        <b>計算のルール：</b><span>「今の相場＋余裕」と「過去の高値」の<b>高いほう</b>を使う</span>
+        <label>余裕 <input type="number" id="buffer-pct" value="10" style="width:52px;" oninput="applyBasis()"> %</label>
+        <label>過去の高値（純金） <input type="number" id="peak-pure" value="29500" style="width:84px;" oninput="applyBasis()"> 円/g</label>
+        <label>Pt の過去の高値 <input type="number" id="peak-pt" placeholder="なし" style="width:84px;" oninput="applyBasis()"> 円/g</label>
+      </div>
+      <div id="latest-unit-hint" style="font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.6;"></div>
       <div class="metal-grid">
         <div class="metal-card k18">
           <div class="metal-badge k18">K18YG</div>
           <div class="form-group" style="margin-bottom:4px;">
-            <label>単価（円/g）</label>
-            <input type="number" id="price-k18" value="20500" oninput="calcAll();updateSummary()">
+            <label>今の相場（円/g）</label>
+            <input type="number" id="market-k18" placeholder="例 20500" oninput="applyBasis()">
           </div>
+          <div class="form-group" style="margin-bottom:4px;">
+            <label>計算に使う単価（自動）</label>
+            <input type="number" id="price-k18" value="20500" readonly style="background:#F3F0E8;font-weight:700;">
+          </div>
+          <div id="basis-note-k18" style="font-size:10px;color:var(--muted);line-height:1.6;margin-bottom:4px;"></div>
           <div class="metal-unit">比重: 15.6 g/cm³</div>
         </div>
         <div class="metal-card k10">
           <div class="metal-badge k10">K10YG</div>
           <div class="form-group" style="margin-bottom:4px;">
-            <label>単価（円/g）</label>
-            <input type="number" id="price-k10" value="11100" oninput="calcAll();updateSummary()">
+            <label>今の相場（円/g）</label>
+            <input type="number" id="market-k10" placeholder="例 11100" oninput="applyBasis()">
           </div>
+          <div class="form-group" style="margin-bottom:4px;">
+            <label>計算に使う単価（自動）</label>
+            <input type="number" id="price-k10" value="11100" readonly style="background:#F3F0E8;font-weight:700;">
+          </div>
+          <div id="basis-note-k10" style="font-size:10px;color:var(--muted);line-height:1.6;margin-bottom:4px;"></div>
           <div class="metal-unit">比重: 11.35 g/cm³</div>
         </div>
         <div class="metal-card sv">
           <div class="metal-badge sv">SV925</div>
           <div class="form-group" style="margin-bottom:4px;">
-            <label>単価（円/g）</label>
-            <input type="number" id="price-sv" value="450" oninput="calcAll();updateSummary()">
+            <label>今の相場（円/g）</label>
+            <input type="number" id="market-sv" placeholder="例 450" oninput="applyBasis()">
           </div>
+          <div class="form-group" style="margin-bottom:4px;">
+            <label>計算に使う単価（自動）</label>
+            <input type="number" id="price-sv" value="450" readonly style="background:#F3F0E8;font-weight:700;">
+          </div>
+          <div id="basis-note-sv" style="font-size:10px;color:var(--muted);line-height:1.6;margin-bottom:4px;"></div>
           <div class="metal-unit">比重: 10.35 g/cm³</div>
         </div>
         <div class="metal-card" style="background:#F0F0F8;border-color:#8080C0;">
           <div class="metal-badge" style="background:#2C2C2C;color:#E8D5B0;border:1px solid #C9A96E;">Pt900</div>
           <div class="form-group" style="margin-bottom:4px;">
-            <label>単価（円/g）</label>
-            <input type="number" id="price-pt" value="11000" oninput="calcAll();updateSummary()">
+            <label>今の相場（円/g）</label>
+            <input type="number" id="market-pt" placeholder="例 11000" oninput="applyBasis()">
           </div>
+          <div class="form-group" style="margin-bottom:4px;">
+            <label>計算に使う単価（自動）</label>
+            <input type="number" id="price-pt" value="11000" readonly style="background:#F3F0E8;font-weight:700;">
+          </div>
+          <div id="basis-note-pt" style="font-size:10px;color:var(--muted);line-height:1.6;margin-bottom:4px;"></div>
           <div class="metal-unit">比重: 21.45 g/cm³</div>
         </div>
       </div>
@@ -415,6 +442,11 @@ canvas { max-width: 100%; }
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- ===== 見直しが必要な商品（最初の画面） ===== -->
+  <div class="card" id="review-panel-card" style="margin-bottom:12px;">
+    <div id="review-panel"></div>
   </div>
 
   <!-- ===== STEP 2: 商品データ ===== -->
@@ -1678,6 +1710,7 @@ function renderTable() {
   }
   sortedProducts = applyFilters(sortedProducts);
   updateDeliveryCounts();
+  if (typeof renderReviewPanel === 'function') renderReviewPanel();
 
   // グループ化はsortedProductsで行う
   const groups = [];
@@ -4356,6 +4389,7 @@ function collectSettings() {
   const settings = {};
   // 相場
   ['price-k18','price-k10','price-sv','price-pt','loss-rate'].forEach(id => settings[id] = val(id));
+  ['market-k18','market-k10','market-sv','market-pt','buffer-pct','peak-pure','peak-pt'].forEach(id => settings[id] = val(id));
   // 端数処理
   ['k18','k10','sv','pt'].forEach(m => {
     settings[`round-${m}-unit`] = val(`round-${m}-unit`);
@@ -4389,6 +4423,7 @@ function applySettings(settings) {
     if (typeof v === 'boolean') setChk(id, v);
     else set(id, v);
   });
+  if (typeof applyBasis === 'function') applyBasis(true);
 }
 
 function autoSaveToLocal() {
@@ -4617,6 +4652,7 @@ function stripCloudMeta(it) {
 
 async function startCloud() {
   await waitForLogin();
+  loadLatestUnits();
   setCloudIndicator('☁️ 読み込み中…');
   try {
     const cloud = await cloudLoad();
@@ -5089,6 +5125,103 @@ window.openReviewList = openReviewList;
 window.rvSetPref = rvSetPref;
 window.applyReviewPrices = applyReviewPrices;
 
+// ===== 計算に使う地金の単価 =====
+// ルール：「今の相場＋余裕」と「過去の高値」の高いほうを使う（2026年10月決定）
+// 過去の高値は純金の価格から、金の割合（K18 75%、K10 41.7%）で計算する。
+const BASIS_PURITY = { k18: 0.75, k10: 0.417 };
+
+function applyBasis(skipCalc) {
+  const num = id => parseFloat(document.getElementById(id)?.value);
+  const buf = (num('buffer-pct') || 0) / 100;
+  const pure = num('peak-pure') || 0;
+  ['k18', 'k10', 'sv', 'pt'].forEach(m => {
+    const mk = document.getElementById('market-' + m);
+    const pr = document.getElementById('price-' + m);
+    const note = document.getElementById('basis-note-' + m);
+    if (!mk || !pr) return;
+    // はじめて使うとき：今までの単価を「今の相場」として引き継ぐ
+    if (mk.value === '' && pr.value !== '') mk.value = pr.value;
+    const market = parseFloat(mk.value) || 0;
+    const withBuf = Math.round(market * (1 + buf));
+    let peak = 0;
+    if (BASIS_PURITY[m]) peak = Math.round(pure * BASIS_PURITY[m]);
+    if (m === 'pt') peak = Math.round(num('peak-pt') || 0);
+    const usePeak = peak > withBuf;
+    pr.value = Math.max(withBuf, peak);
+    if (note) {
+      note.innerHTML = '今＋' + Math.round(buf * 100) + '%：' + withBuf.toLocaleString() + '円'
+        + (peak ? '<br>過去の高値：' + peak.toLocaleString() + '円' : '')
+        + '<br>→ <b style="color:#8D6E00;">' + (usePeak ? '過去の高値' : '今の相場＋余裕') + '</b>を使用';
+    }
+  });
+  if (!skipCalc) { calcAll(); updateSummary(); }
+}
+
+// 最新の納品書に載っている地金の単価（参考）
+async function loadLatestUnits() {
+  const el = document.getElementById('latest-unit-hint');
+  if (!el) return;
+  try {
+    const snap = await fbDb.collection('delivery_history').get();
+    const latest = {};
+    snap.forEach(doc => {
+      const e = doc.data();
+      (e.rows || []).forEach(r => {
+        const mt = String(r.metalType || '').toUpperCase();
+        const u = parseFloat(r.metalUnitPrice) || 0;
+        if (!mt || u <= 0 || r.isRepair) return;
+        const d = diDate(r._inv_date || e.date);
+        if (!latest[mt] || latest[mt].d < d) latest[mt] = { d, u };
+      });
+    });
+    const order = ['K18YG', 'K18PG', 'K10YG', 'SV925', 'PT900'];
+    const keys = Object.keys(latest).sort((a, b) => (order.indexOf(a) + 99 * (order.indexOf(a) < 0)) - (order.indexOf(b) + 99 * (order.indexOf(b) < 0)));
+    if (keys.length === 0) return;
+    el.innerHTML = '📦 最新の納品書の単価（参考）：' + keys.map(mt =>
+      mt + ' <b>' + Math.round(latest[mt].u).toLocaleString() + '円</b>（' + latest[mt].d.slice(5).replace('-', '/') + '）').join('　')
+      + '<br><span style="font-size:10px;">※ K18 は、前に買っておいた地金の単価になっていることがあります</span>';
+  } catch(e) { console.warn('最新の単価を読めませんでした', e); }
+}
+
+// ===== 見直しが必要な商品（最初の画面に出す） =====
+function renderReviewPanel() {
+  const el = document.getElementById('review-panel');
+  if (!el) return;
+  const limit = _rvPref.limit;
+  const rows = [];
+  products.forEach(p => {
+    const conf = parseFloat(p.confirmedPrice) || 0;
+    if (!conf || !p.cost) return;
+    const rate = p.cost / conf * 100;
+    if (rate > limit) rows.push({ p, conf, rate });
+  });
+  rows.sort((a, b) => b.rate - a.rate);
+  const yen = n => Math.round(n).toLocaleString();
+  if (rows.length === 0) {
+    el.innerHTML = '<div style="font-size:14px;font-weight:600;color:#2D5E3A;">✅ 見直しが必要な商品はありません'
+      + '<span style="font-size:11px;font-weight:400;color:var(--muted);margin-left:8px;">（原価率 ' + limit + '% を超える商品なし）</span></div>';
+    return;
+  }
+  el.innerHTML = '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px;">'
+    + '<div style="font-size:15px;font-weight:600;color:#A33A3A;">⚠ 見直しが必要な商品：' + rows.length + ' 件</div>'
+    + '<span style="font-size:11px;color:var(--muted);">計算に使う単価で見て、原価率が ' + limit + '% を超えている商品です</span>'
+    + '<button class="btn btn-gold btn-sm" style="margin-left:auto;" onclick="openReviewList()">すべて見る・価格を確定 →</button></div>'
+    + '<table style="width:100%;border-collapse:collapse;font-size:11px;">'
+    + '<tr style="text-align:left;color:var(--muted);"><th style="padding:4px 6px;">型番・商品名</th><th>納品書</th><th style="text-align:right;">確定価格</th><th style="text-align:right;">原価</th><th style="text-align:right;">原価率</th><th style="text-align:right;">おすすめ価格</th></tr>'
+    + rows.slice(0, 5).map(r => '<tr style="border-top:1px solid #eee;">'
+      + '<td style="padding:4px 6px;"><b>' + (r.p.codeFull || '') + '</b> <span style="color:#888;">' + (r.p.name || '') + '</span></td>'
+      + '<td>' + deliveryBadge(r.p) + '</td>'
+      + '<td style="text-align:right;">' + yen(r.conf) + '</td>'
+      + '<td style="text-align:right;">' + yen(r.p.cost) + '</td>'
+      + '<td style="text-align:right;font-weight:700;color:#A33A3A;">' + r.rate.toFixed(1) + '%</td>'
+      + '<td style="text-align:right;"><b>' + (r.p.price ? yen(r.p.price) : '-') + '</b></td></tr>').join('')
+    + '</table>'
+    + (rows.length > 5 ? '<div style="font-size:11px;color:var(--muted);margin-top:6px;">ほか ' + (rows.length - 5) + ' 件 → 「すべて見る」から確認できます</div>' : '');
+}
+
+window.applyBasis = applyBasis;
+window.renderReviewPanel = renderReviewPanel;
+
 // ===== INIT =====
 let _hasLocal = false;
 try { _hasLocal = autoRestoreFromLocal(); } catch(e) { console.warn('Restore failed:', e); }
@@ -5097,6 +5230,7 @@ if (!_hasLocal) {
   calcAll();
 }
 setTimeout(initAllGraphZoom, 300);
+setTimeout(() => applyBasis(), 150);   // 計算に使う単価を出す
 setTimeout(startCloud, 200);   // 端末のデータを表示してからクラウドと同期
 </script>
 </body>
