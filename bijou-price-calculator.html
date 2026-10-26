@@ -6,6 +6,9 @@
 <title>BIJOU 価格計算ツール</title>
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -288,13 +291,25 @@ canvas { max-width: 100%; }
 </head>
 <body>
 
+<!-- Googleログイン画面（Firebase Authentication） -->
+<div id="googleLoginScreen" style="display:none;position:fixed;inset:0;z-index:10000;background:#2a2a2a;align-items:center;justify-content:center;padding:20px;">
+  <div style="background:#fff;border-radius:14px;padding:36px 30px;max-width:360px;width:100%;text-align:center;">
+    <div style="font-size:18px;font-weight:600;margin-bottom:6px;">BIJOU 価格計算ツール</div>
+    <div style="font-size:28px;margin:14px 0;">🔐</div>
+    <p style="font-size:13px;margin-bottom:16px;">Googleアカウントでログインしてください</p>
+    <div id="googleLoginError" style="display:none;font-size:12px;color:#C25C5C;margin-bottom:12px;"></div>
+    <button onclick="cloudLogin()" style="width:100%;padding:12px;border:none;border-radius:8px;background:#2a2a2a;color:#fff;font-size:14px;cursor:pointer;">Googleでログイン</button>
+    <button id="googleSwitchBtn" onclick="cloudLogout(true)" style="display:none;width:100%;margin-top:10px;padding:10px;border:1px solid #ccc;border-radius:8px;background:#fff;font-size:12px;cursor:pointer;">別のアカウントでログイン</button>
+  </div>
+</div>
+
 <div class="header">
   <div>
     <div class="header-title">BIJOU 価格計算ツール</div>
     <div class="header-sub">PRICE CALCULATION SYSTEM</div>
   </div>
   <div class="header-actions">
-    <span id="autosave-indicator" style="font-size:10px;color:var(--muted);opacity:0.5;white-space:nowrap;transition:opacity 0.5s;margin-right:4px;"></span><button id="undo-btn" class="btn btn-outline btn-sm" onclick="undo()" disabled style="color:var(--muted);">↩ (0)</button>
+    <span id="cloud-indicator" style="font-size:10px;color:var(--muted);white-space:nowrap;margin-right:6px;cursor:pointer;" onclick="cloudLogout()" title="ログアウト"></span><span id="autosave-indicator" style="font-size:10px;color:var(--muted);opacity:0.5;white-space:nowrap;transition:opacity 0.5s;margin-right:4px;"></span><button id="undo-btn" class="btn btn-outline btn-sm" onclick="undo()" disabled style="color:var(--muted);">↩ (0)</button>
     <button id="redo-btn" class="btn btn-outline btn-sm" onclick="redo()" disabled style="color:var(--muted);">↪ (0)</button>
     <button class="btn btn-outline btn-sm" onclick="calcAll();renderTable();toast('グループを更新しました ✅')" style="color:#2D5E3A;border-color:#4A7C59;" title="追加・変更をグループに即反映">🔄 グループ更新</button>
     <button class="btn btn-outline btn-sm" onclick="if(confirm('商品データを全て削除しますか？'))resetProducts()" style="color:var(--danger);border-color:var(--danger);">🗑 商品リセット</button>
@@ -4330,6 +4345,7 @@ function autoSaveToLocal() {
       settings: collectSettings(),
     };
     localStorage.setItem(LS_KEY, JSON.stringify(data));
+    if (typeof scheduleCloudSave === 'function') scheduleCloudSave();
     // 保存時刻表示
     const el = document.getElementById('autosave-indicator');
     if (el) {
@@ -4381,6 +4397,223 @@ window.autoRestoreFromLocal = autoRestoreFromLocal;
 window.clearLocalData    = clearLocalData;
 window.scheduleAutoSave  = scheduleAutoSave;
 
+// ===== クラウド保存（BIJOU Managerと共通のFirebase） =====
+// 商品は1件ずつ別の文書（price_items/{商品id}）に保存し、変わった商品だけを書き込む。
+// まとめて上書きしないので、別の端末で変えた商品を消してしまうことがない。
+const FB_CONFIG = {
+  apiKey: "AIzaSyCMxMIWIniOZ8pngqwq4YhmEQ4tTZfZYSI",
+  authDomain: "jewelry-manager-sa.firebaseapp.com",
+  projectId: "jewelry-manager-sa",
+  storageBucket: "jewelry-manager-sa.firebasestorage.app",
+  messagingSenderId: "3374112415155",
+  appId: "1:3374112415155:web:937bf8d008ffb253295c6e"
+};
+const fbApp  = firebase.initializeApp(FB_CONFIG, 'bijou');
+const fbDb   = firebase.firestore(fbApp);
+const fbAuth = firebase.auth(fbApp);
+const CLOUD_SKIP_FIELDS = ['_calcGram', '_metalCost', '_rate', 'price', 'cost']; // 計算で毎回出し直す項目
+let _cloudReady = false;
+let _cloudSnapshot = {};   // 商品id → 最後にクラウドと一致した内容
+let _cloudSettingsJson = '';
+let _cloudTimer = null;
+const LAST_SYNC_KEY = 'bijou_price_calc_cloud_sync'; // この端末が最後にクラウドと一致した時刻
+function markSynced() { try { localStorage.setItem(LAST_SYNC_KEY, new Date().toISOString()); } catch(e) {} }
+
+function setCloudIndicator(text, color) {
+  const el = document.getElementById('cloud-indicator');
+  if (el) { el.textContent = text; el.style.color = color || 'var(--muted)'; }
+}
+
+function cloudEmail() { return (fbAuth.currentUser && fbAuth.currentUser.email) || ''; }
+
+function showGoogleLogin(errMsg, showSwitch) {
+  document.getElementById('googleLoginScreen').style.display = 'flex';
+  const err = document.getElementById('googleLoginError');
+  err.textContent = errMsg || '';
+  err.style.display = errMsg ? 'block' : 'none';
+  document.getElementById('googleSwitchBtn').style.display = showSwitch ? 'block' : 'none';
+}
+
+function waitForLogin() {
+  return new Promise(resolve => {
+    const unsub = fbAuth.onAuthStateChanged(user => {
+      if (!user) { showGoogleLogin(); return; }
+      unsub();
+      document.getElementById('googleLoginScreen').style.display = 'none';
+      resolve(user);
+    });
+  });
+}
+
+async function cloudLogin() {
+  try {
+    await fbAuth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+  } catch(e) {
+    if (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') return;
+    showGoogleLogin('ログインできませんでした（' + e.code + '）');
+  }
+}
+
+async function cloudLogout(skipConfirm) {
+  if (!skipConfirm && !confirm('ログアウトしますか？')) return;
+  await fbAuth.signOut();
+  location.reload();
+}
+
+function handleCloudError(e, label) {
+  console.warn(label, e);
+  if (e && e.code === 'permission-denied') {
+    _cloudReady = false;
+    showGoogleLogin('このアカウント（' + cloudEmail() + '）には利用する権限がありません。', true);
+  } else {
+    setCloudIndicator('☁️ ' + label + '（' + (e && e.message ? e.message : e) + '）', '#C25C5C');
+  }
+}
+
+// id がない・重複している商品に、新しい id を付ける
+function ensureProductIds() {
+  const seen = new Set();
+  products.forEach(p => {
+    if (!p.id || seen.has(String(p.id))) p.id = 'i' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    p.id = String(p.id);
+    seen.add(p.id);
+  });
+}
+
+function cloudItemJson(p, order) {
+  const o = JSON.parse(JSON.stringify(p));   // undefined を取り除く
+  CLOUD_SKIP_FIELDS.forEach(f => delete o[f]);
+  delete o.id;
+  o._order = order;
+  return JSON.stringify(o);
+}
+
+function scheduleCloudSave() {
+  if (!_cloudReady) return;
+  clearTimeout(_cloudTimer);
+  _cloudTimer = setTimeout(cloudSave, 3000);
+}
+
+async function cloudSave() {
+  if (!_cloudReady) return;
+  ensureProductIds();
+  const writes = [];
+  const current = {};
+  products.forEach((p, i) => {
+    const json = cloudItemJson(p, i);
+    current[p.id] = json;
+    if (_cloudSnapshot[p.id] !== json) writes.push(['set', p.id, json]);
+  });
+  Object.keys(_cloudSnapshot).forEach(id => { if (!(id in current)) writes.push(['delete', id]); });
+  const settingsJson = JSON.stringify(collectSettings());
+  if (writes.length === 0 && settingsJson === _cloudSettingsJson) return;
+
+  setCloudIndicator('☁️ 保存中…');
+  try {
+    for (let i = 0; i < writes.length; i += 400) {
+      const batch = fbDb.batch();
+      writes.slice(i, i + 400).forEach(([op, id, json]) => {
+        const ref = fbDb.collection('price_items').doc(id);
+        if (op === 'set') batch.set(ref, Object.assign(JSON.parse(json), { _updatedAt: new Date().toISOString() }));
+        else batch.delete(ref);
+      });
+      await batch.commit();
+    }
+    if (settingsJson !== _cloudSettingsJson) {
+      await fbDb.collection('price_calc').doc('settings').set({ settings: JSON.parse(settingsJson), savedAt: new Date().toISOString() });
+    }
+    writes.forEach(([op, id, json]) => { if (op === 'set') _cloudSnapshot[id] = json; else delete _cloudSnapshot[id]; });
+    _cloudSettingsJson = settingsJson;
+    markSynced();
+    const t = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+    setCloudIndicator('☁️ クラウド保存 ' + t + '（' + cloudEmail() + '）', '#5C8C6A');
+  } catch(e) { handleCloudError(e, 'クラウド保存に失敗'); }
+}
+
+async function cloudLoad() {
+  const results = await Promise.all([
+    fbDb.collection('price_calc').doc('settings').get(),
+    fbDb.collection('price_items').get(),
+  ]);
+  const settingsDoc = results[0], snap = results[1];
+  const items = [];
+  snap.forEach(d => items.push(Object.assign({}, d.data(), { id: d.id })));
+  items.sort((a, b) => (a._order || 0) - (b._order || 0));
+  return {
+    items,
+    settings: settingsDoc.exists ? settingsDoc.data().settings : null,
+    savedAt: settingsDoc.exists ? settingsDoc.data().savedAt : null,
+  };
+}
+
+function stripCloudMeta(it) {
+  const p = Object.assign({}, it);
+  delete p._order; delete p._updatedAt;
+  return p;
+}
+
+async function startCloud() {
+  await waitForLogin();
+  setCloudIndicator('☁️ 読み込み中…');
+  try {
+    const cloud = await cloudLoad();
+    let localSavedAt = null;
+    try { localSavedAt = JSON.parse(localStorage.getItem(LS_KEY) || '{}').savedAt || null; } catch(e) {}
+
+    if (cloud.items.length === 0) {
+      // クラウドが空：この端末のデータを最初の1回だけ送る
+      _cloudReady = true;
+      if (products.length > 0) {
+        await cloudSave();
+        toast('この端末のデータをクラウドに保存しました（' + products.length + '件）');
+      } else {
+        setCloudIndicator('☁️ クラウド接続済み（' + cloudEmail() + '）', '#5C8C6A');
+      }
+      return;
+    }
+
+    // クラウドの内容を「最後に一致した状態」として記録
+    cloud.items.forEach(it => { _cloudSnapshot[it.id] = cloudItemJson(stripCloudMeta(it), it._order || 0); });
+    _cloudSettingsJson = cloud.settings ? JSON.stringify(cloud.settings) : '';
+
+    // この端末とクラウドの内容が違うときだけ、どちらを使うか決める
+    ensureProductIds();
+    const localJson = {};
+    products.forEach((p, i) => { localJson[p.id] = cloudItemJson(p, i); });
+    const sameItems = Object.keys(localJson).length === Object.keys(_cloudSnapshot).length
+      && Object.keys(localJson).every(id => localJson[id] === _cloudSnapshot[id]);
+    let lastSync = null;
+    try { lastSync = localStorage.getItem(LAST_SYNC_KEY); } catch(e) {}
+    const cloudLatest = [cloud.savedAt].concat(cloud.items.map(it => it._updatedAt)).filter(Boolean).sort().pop() || null;
+    const localChanged = products.length > 0 && !sameItems && (!lastSync || (localSavedAt && localSavedAt > lastSync));
+    const cloudChanged = !lastSync || (cloudLatest && cloudLatest > lastSync);
+    let useLocal = false;
+    if (localChanged && !cloudChanged) useLocal = true;
+    else if (localChanged && cloudChanged) {
+      useLocal = confirm('この端末とクラウドの両方で、別々に変更があります。\n\nOK：この端末のデータをクラウドに保存する\nキャンセル：クラウドのデータを読み込む（この端末の変更は使わない）');
+    }
+    if (useLocal) {
+      _cloudReady = true;
+      await cloudSave();
+      toast('この端末の変更をクラウドに保存しました');
+      return;
+    }
+
+    // クラウドのデータを使う
+    products = cloud.items.map(stripCloudMeta);
+    if (cloud.settings) applySettings(cloud.settings);
+    calcAll();
+    drawAllGraphs();
+    _cloudReady = true;
+    autoSaveToLocal();
+    markSynced();
+    setCloudIndicator('☁️ クラウドから読み込み済み（' + cloudEmail() + '）', '#5C8C6A');
+    toast('クラウドから ' + products.length + ' 件を読み込みました');
+  } catch(e) { handleCloudError(e, 'クラウドの読み込みに失敗'); }
+}
+window.cloudLogin = cloudLogin;
+window.cloudLogout = cloudLogout;
+
 // ===== INIT =====
 let _hasLocal = false;
 try { _hasLocal = autoRestoreFromLocal(); } catch(e) { console.warn('Restore failed:', e); }
@@ -4389,6 +4622,7 @@ if (!_hasLocal) {
   calcAll();
 }
 setTimeout(initAllGraphZoom, 300);
+setTimeout(startCloud, 200);   // 端末のデータを表示してからクラウドと同期
 </script>
 </body>
 </html>
