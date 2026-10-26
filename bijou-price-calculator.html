@@ -4483,12 +4483,19 @@ function ensureProductIds() {
   });
 }
 
+// 項目の並び順をそろえてから文字にする（クラウドから戻ると並び順が変わるため）
+function stableJson(v) {
+  if (Array.isArray(v)) return '[' + v.map(stableJson).join(',') + ']';
+  if (v && typeof v === 'object') return '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + stableJson(v[k])).join(',') + '}';
+  return JSON.stringify(v);
+}
+
 function cloudItemJson(p, order) {
   const o = JSON.parse(JSON.stringify(p));   // undefined を取り除く
   CLOUD_SKIP_FIELDS.forEach(f => delete o[f]);
   delete o.id;
   o._order = order;
-  return JSON.stringify(o);
+  return stableJson(o);
 }
 
 function scheduleCloudSave() {
@@ -4508,7 +4515,7 @@ async function cloudSave() {
     if (_cloudSnapshot[p.id] !== json) writes.push(['set', p.id, json]);
   });
   Object.keys(_cloudSnapshot).forEach(id => { if (!(id in current)) writes.push(['delete', id]); });
-  const settingsJson = JSON.stringify(collectSettings());
+  const settingsJson = stableJson(collectSettings());
   if (writes.length === 0 && settingsJson === _cloudSettingsJson) return;
 
   setCloudIndicator('☁️ 保存中…');
@@ -4577,7 +4584,7 @@ async function startCloud() {
 
     // クラウドの内容を「最後に一致した状態」として記録
     cloud.items.forEach(it => { _cloudSnapshot[it.id] = cloudItemJson(stripCloudMeta(it), it._order || 0); });
-    _cloudSettingsJson = cloud.settings ? JSON.stringify(cloud.settings) : '';
+    _cloudSettingsJson = cloud.settings ? stableJson(cloud.settings) : '';
 
     // この端末とクラウドの内容が違うときだけ、どちらを使うか決める
     ensureProductIds();
