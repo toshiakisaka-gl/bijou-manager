@@ -480,6 +480,15 @@ canvas { max-width: 100%; }
       <button onclick="toggleFilter('cat','necklace')" id="fcat-necklace" class="filter-btn" style="font-size:10px;padding:2px 8px;border-radius:10px;border:1px solid var(--border);background:white;cursor:pointer;">ネックレス</button>
       <button onclick="toggleFilter('cat','earring')" id="fcat-earring" class="filter-btn" style="font-size:10px;padding:2px 8px;border-radius:10px;border:1px solid var(--border);background:white;cursor:pointer;">ピアス/イヤリング</button>
     </div>
+    <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-bottom:6px;">
+      <span style="font-size:10px;color:var(--muted);">納品書:</span>
+      <button onclick="toggleFilter('dlv','all')" id="fdlv-all" class="filter-btn filter-active" style="font-size:10px;padding:2px 8px;border-radius:10px;border:1px solid #888;background:#2C2C2C;color:#E8D5B0;cursor:pointer;">全て</button>
+      <button onclick="toggleFilter('dlv','none')" id="fdlv-none" class="filter-btn" style="font-size:10px;padding:2px 8px;border-radius:10px;border:1px solid var(--border);background:white;cursor:pointer;">⚪ 未確認</button>
+      <button onclick="toggleFilter('dlv','old')" id="fdlv-old" class="filter-btn" style="font-size:10px;padding:2px 8px;border-radius:10px;border:1px solid var(--border);background:white;cursor:pointer;">🔴 1年以上前</button>
+      <button onclick="toggleFilter('dlv','mid')" id="fdlv-mid" class="filter-btn" style="font-size:10px;padding:2px 8px;border-radius:10px;border:1px solid var(--border);background:white;cursor:pointer;">🟡 半年〜1年</button>
+      <button onclick="toggleFilter('dlv','new')" id="fdlv-new" class="filter-btn" style="font-size:10px;padding:2px 8px;border-radius:10px;border:1px solid var(--border);background:white;cursor:pointer;">🟢 半年以内</button>
+      <span id="dlv-counts" style="font-size:10px;color:var(--muted);margin-left:6px;"></span>
+    </div>
     <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:4px;">
       <input type="text" id="simple-search" placeholder="🔍 商品名・型番で絞り込み" oninput="renderTable()" style="font-size:11px;padding:3px 8px;border:1px solid var(--border);border-radius:6px;width:180px;">
       <span style="margin-left:8px;font-size:11px;color:var(--muted);">並び替え:</span>
@@ -1668,6 +1677,7 @@ function renderTable() {
     );
   }
   sortedProducts = applyFilters(sortedProducts);
+  updateDeliveryCounts();
 
   // グループ化はsortedProductsで行う
   const groups = [];
@@ -1724,6 +1734,7 @@ function renderTable() {
       <td><input type="text" value="${p.name}" oninput="products[${i}].name=this.value;renderTable()" style="width:80px;"></td>
       <td>
 <input type="text" value="${p.codeFull}" placeholder="001-R-18" oninput="products[${i}].codeFull=this.value" style="width:80px;font-size:11px;font-weight:500;">
+<div style="margin-top:3px;">${deliveryBadge(p)}</div>
       </td>
       <td>
         <div style="position:relative;display:inline-block;">
@@ -3933,7 +3944,7 @@ window.setTableMode = setTableMode;
 
 
 // ===== 絞り込みフィルター =====
-const _activeFilters = { mat: 'all', cat: 'all' };
+const _activeFilters = { mat: 'all', cat: 'all', dlv: 'all' };
 
 function toggleFilter(type, value) {
   _activeFilters[type] = value;
@@ -3973,8 +3984,48 @@ function applyFilters(productList) {
       return (p.name||'').includes(k) || (p.codeFull||'').includes(k);
     }));
   }
+  // 納品書の確認状況フィルター
+  if (_activeFilters.dlv !== 'all') {
+    list = list.filter(({p}) => deliveryAge(p) === _activeFilters.dlv);
+  }
   return list;
 }
+
+// ===== 納品書の確認状況（いつの納品書で数字を確認したか） =====
+// new：半年以内 ／ mid：半年〜1年 ／ old：1年以上前 ／ none：未確認
+function deliveryAge(p) {
+  const d = p && p.deliveryRef && p.deliveryRef.date;
+  if (!d) return 'none';
+  const days = (Date.now() - new Date(d + 'T00:00:00').getTime()) / 86400000;
+  if (days <= 183) return 'new';
+  if (days <= 365) return 'mid';
+  return 'old';
+}
+
+function deliveryBadge(p) {
+  const age = deliveryAge(p);
+  const st = {
+    new:  ['🟢', '#E8F5E9', '#2D5E3A'],
+    mid:  ['🟡', '#FFF8E1', '#8D6E00'],
+    old:  ['🔴', '#FDECEA', '#A33A3A'],
+    none: ['⚪', '#F2F2F2', '#888'],
+  }[age];
+  const ref = p.deliveryRef || {};
+  const label = age === 'none' ? '未確認' : ref.date;
+  const info = age === 'none'
+    ? 'まだ納品書で確認していない数字です（昔のデータのまま）'
+    : '納品書 ' + ref.date + (ref.slip ? '／伝票 ' + ref.slip : '') + ' で確認済み';
+  return '<span title="' + info + '" onclick="toast(\'' + info + '\')" style="display:inline-block;font-size:9px;padding:1px 6px;border-radius:8px;background:' + st[1] + ';color:' + st[2] + ';cursor:pointer;white-space:nowrap;">' + st[0] + ' ' + label + '</span>';
+}
+
+function updateDeliveryCounts() {
+  const el = document.getElementById('dlv-counts');
+  if (!el) return;
+  const c = { new: 0, mid: 0, old: 0, none: 0 };
+  products.forEach(p => { c[deliveryAge(p)]++; });
+  el.textContent = '（🟢' + c.new + '　🟡' + c.mid + '　🔴' + c.old + '　⚪' + c.none + '）';
+}
+window.deliveryBadge = deliveryBadge;
 window.applyFilters = applyFilters;
 
 
@@ -4700,6 +4751,7 @@ async function openDeliveryImport() {
 
     const candidates = [];
     const unmatched = [];
+    let confirmedSame = 0;
     Object.keys(latest).forEach(code => {
       const L = latest[code], r = L.row;
       if (!(code in byCode)) { unmatched.push(code + '（' + L.date + '）'); return; }
@@ -4714,7 +4766,14 @@ async function openDeliveryImport() {
       if (Math.abs((parseFloat(p.gram) || 0) - next.gram) > 0.005) diffs.gram = true;
       // 納品書側が 0 のときは今の数字を残す（石やパーツが別の行に分かれていることがあるため）
       ['make', 'gem', 'parts'].forEach(f => { if (next[f] > 0 && Math.abs((parseFloat(p[f]) || 0) - next[f]) >= 1) diffs[f] = true; });
-      if (Object.keys(diffs).length === 0) return;
+      if (Object.keys(diffs).length === 0) {
+        // 数字が同じ＝この納品書で確認できた。確認日を新しいほうに更新する
+        if (!p.deliveryRef || !p.deliveryRef.date || p.deliveryRef.date < L.date) {
+          p.deliveryRef = { date: L.date, slip: L.slip };
+          confirmedSame++;
+        }
+        return;
+      }
       const before = diCostOf(p), after = diCostOf(p, next);
       const conf = parseFloat(p.confirmedPrice) || 0;
       candidates.push({
@@ -4729,6 +4788,10 @@ async function openDeliveryImport() {
     });
     candidates.sort((a, b) => (b.rateAfter || 0) - (a.rateAfter || 0));
     _diCandidates = candidates;
+    if (confirmedSame > 0) {
+      calcAll();   // 確認日を保存（クラウドにも保存される）
+      toast('数字が納品書と同じだった ' + confirmedSame + ' 件に、確認日を記録しました');
+    }
     renderDeliveryImport(Object.keys(latest).length, unmatched);
   } catch(e) {
     diCloseModal();
@@ -4982,7 +5045,7 @@ function renderReviewList() {
       + '<button class="btn btn-outline btn-sm" onclick="diCheckAll(true)">すべて選ぶ</button>'
       + '<button class="btn btn-outline btn-sm" onclick="diCheckAll(false)">すべて外す</button></div>'
       + '<table style="width:100%;border-collapse:collapse;font-size:11px;">'
-      + '<tr style="background:#f5f2ea;text-align:left;"><th style="padding:6px;"></th><th>型番・商品名</th><th>金種</th><th style="text-align:right;">グラム</th>'
+      + '<tr style="background:#f5f2ea;text-align:left;"><th style="padding:6px;"></th><th>型番・商品名</th><th>金種</th><th>納品書</th><th style="text-align:right;">グラム</th>'
       + '<th style="text-align:right;">原価' + (rise ? '（想定）' : '') + '</th><th style="text-align:right;">確定価格</th><th style="text-align:right;">原価率</th>'
       + '<th style="text-align:right;">おすすめ価格</th><th style="text-align:right;">差</th></tr>';
     rows.forEach((r, k) => {
@@ -4991,6 +5054,7 @@ function renderReviewList() {
         + '<td style="padding:6px;"><input type="checkbox" class="di-check" data-k="' + k + '"></td>'
         + '<td><b>' + (r.p.codeFull || '') + '</b><br><span style="color:#888;">' + (r.p.name || '') + '</span></td>'
         + '<td>' + (matName[r.p.material] || r.p.material || '') + '</td>'
+        + '<td>' + deliveryBadge(r.p) + '</td>'
         + '<td style="text-align:right;">' + (Math.round((r.p._calcGram || 0) * 100) / 100) + 'g</td>'
         + '<td style="text-align:right;">' + yen(r.cost) + '<br><span style="color:#aaa;">地金 ' + Math.round(r.metalShare) + '%</span></td>'
         + '<td style="text-align:right;">' + yen(r.conf) + '</td>'
