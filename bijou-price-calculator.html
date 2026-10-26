@@ -424,6 +424,7 @@ canvas { max-width: 100%; }
         <button class="btn btn-outline btn-sm" onclick="addProduct()">＋ 商品追加</button>
         <button class="btn btn-outline btn-sm" onclick="document.getElementById('import-products-file').click()">📂 Excelから読込</button>
         <button class="btn btn-outline btn-sm" onclick="openDeliveryImport()" style="color:#2E7BB5;border-color:#2E7BB5;" title="納品書アプリの最新の納品書から、グラム数・制作費・石代・パーツ代を取り込みます">📦 納品書から取込</button>
+        <button class="btn btn-outline btn-sm" onclick="openBijouPriceImport()" style="color:#2D5E3A;border-color:#4A7C59;" title="在庫管理アプリ（BIJOU Manager）の価格を、確定価格に取り込みます">🏷 在庫管理の価格を取込</button>
         <input type="file" id="import-products-file" accept=".xlsx" style="display:none" onchange="importProducts(this)">
       </div>
     </div>
@@ -4809,6 +4810,113 @@ window.openDeliveryImport = openDeliveryImport;
 window.diCloseModal = diCloseModal;
 window.diCheckAll = diCheckAll;
 window.applyDeliveryImport = applyDeliveryImport;
+
+// ===== 在庫管理（BIJOU Manager）の価格を、価格アプリの確定価格に取り込む =====
+// 在庫管理アプリの価格（税抜）を正しいものとして、型番が同じ商品の「確定価格」をそろえる。
+// 反映するのはチェックを付けた商品だけ。
+let _bpCandidates = [];
+
+async function openBijouPriceImport() {
+  if (!_cloudReady) { toast('クラウドに接続してから使ってください'); return; }
+  diShowModal('<p style="font-size:13px;">在庫管理アプリの価格を読み込み中…</p>');
+  try {
+    const snap = await fbDb.collection('products').get();
+    // 型番ごとに在庫管理の価格を集める（同じ型番で価格が違うものは「要確認」にする）
+    const bijou = {};
+    snap.forEach(doc => {
+      const d = doc.data();
+      const code = diNormCode(d.code);
+      const price = Math.round(parseFloat(d.price) || 0);
+      if (!code || price <= 0) return;
+      if (!bijou[code]) bijou[code] = { prices: new Set(), name: d.name || '' };
+      bijou[code].prices.add(price);
+    });
+
+    const matched = new Set();
+    const candidates = [];
+    let sameCount = 0;
+    products.forEach((p, i) => {
+      const code = diNormCode(p.codeFull);
+      const b = bijou[code];
+      if (!b) return;
+      matched.add(code);
+      const prices = [...b.prices].sort((x, y) => x - y);
+      const cur = Math.round(parseFloat(p.confirmedPrice) || 0);
+      if (prices.length === 1 && prices[0] === cur) { sameCount++; return; }
+      const next = prices[prices.length - 1];
+      const cost = diCostOf(p).cost;
+      candidates.push({
+        i, code: p.codeFull, name: p.name || b.name, cur, next,
+        conflict: prices.length > 1 ? prices : null,
+        rateCur: cur ? cost / cur * 100 : null,
+        rateNext: next ? cost / next * 100 : null,
+      });
+    });
+    candidates.sort((a, b) => Math.abs(b.next - b.cur) - Math.abs(a.next - a.cur));
+    _bpCandidates = candidates;
+    const notInPriceApp = Object.keys(bijou).filter(c => !matched.has(c));
+    renderBijouPriceImport(sameCount, notInPriceApp);
+  } catch(e) {
+    diCloseModal();
+    handleCloudError(e, '在庫管理の価格の読み込みに失敗');
+  }
+}
+
+function renderBijouPriceImport(sameCount, notInPriceApp) {
+  const yen = n => Math.round(n).toLocaleString();
+  const rate = r => r === null ? '-' : '<span style="color:' + (r > 40 ? '#C25C5C' : r > 35 ? '#B8860B' : '#2D5E3A') + ';">' + r.toFixed(1) + '%</span>';
+  let html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">'
+    + '<div style="font-size:16px;font-weight:600;">🏷 在庫管理アプリの価格を取り込む</div>'
+    + '<button class="btn btn-outline btn-sm" onclick="diCloseModal()">閉じる</button></div>'
+    + '<p style="font-size:12px;color:#666;margin-bottom:12px;">在庫管理アプリ（BIJOU Manager）の価格（税抜）を正しいものとして、価格アプリの「確定価格」をそろえます。<br>'
+    + 'すでに同じ価格の商品：<b>' + sameCount + '</b> 件　／　価格が違う商品：<b>' + _bpCandidates.length + '</b> 件（チェックした商品だけ反映します）</p>';
+
+  if (_bpCandidates.length === 0) {
+    html += '<p style="font-size:13px;">価格の違う商品はありません ✅</p>';
+  } else {
+    html += '<div style="margin-bottom:8px;display:flex;gap:6px;">'
+      + '<button class="btn btn-outline btn-sm" onclick="diCheckAll(true)">すべて選ぶ</button>'
+      + '<button class="btn btn-outline btn-sm" onclick="diCheckAll(false)">すべて外す</button></div>'
+      + '<table style="width:100%;border-collapse:collapse;font-size:11px;">'
+      + '<tr style="background:#f5f2ea;text-align:left;"><th style="padding:6px;"></th><th>型番・商品名</th>'
+      + '<th style="text-align:right;">価格アプリの確定価格</th><th style="text-align:right;">在庫管理の価格</th><th style="text-align:right;">差</th>'
+      + '<th style="text-align:right;">原価率（今 → 取込後）</th><th></th></tr>';
+    _bpCandidates.forEach((c, k) => {
+      const diff = c.next - c.cur;
+      html += '<tr style="border-top:1px solid #eee;">'
+        + '<td style="padding:6px;"><input type="checkbox" class="di-check" data-k="' + k + '"' + (c.conflict ? '' : ' checked') + '></td>'
+        + '<td><b>' + c.code + '</b><br><span style="color:#888;">' + c.name + '</span></td>'
+        + '<td style="text-align:right;color:#999;">' + (c.cur ? yen(c.cur) : '未設定') + '</td>'
+        + '<td style="text-align:right;"><b>' + yen(c.next) + '</b></td>'
+        + '<td style="text-align:right;color:' + (diff >= 0 ? '#2D5E3A' : '#C25C5C') + ';">' + (c.cur ? (diff >= 0 ? '+' : '') + yen(diff) : '-') + '</td>'
+        + '<td style="text-align:right;">' + rate(c.rateCur) + ' → ' + rate(c.rateNext) + '</td>'
+        + '<td style="color:#B8860B;">' + (c.conflict ? '⚠ 在庫管理に同じ型番で別の価格あり（' + c.conflict.map(yen).join(' / ') + '）' : '') + '</td></tr>';
+    });
+    html += '</table>'
+      + '<div style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end;">'
+      + '<button class="btn btn-outline btn-sm" onclick="diCloseModal()">キャンセル</button>'
+      + '<button class="btn btn-gold btn-sm" onclick="applyBijouPriceImport()">✅ チェックした商品の確定価格を更新</button></div>';
+  }
+  if (notInPriceApp.length) {
+    html += '<details style="margin-top:14px;font-size:11px;color:#888;"><summary>在庫管理にはあるが、価格アプリにない型番（' + notInPriceApp.length + '件）</summary>'
+      + '<p style="margin-top:6px;line-height:1.7;">' + notInPriceApp.join('、') + '</p></details>';
+  }
+  diShowModal(html);
+}
+
+function applyBijouPriceImport() {
+  const picked = [...document.querySelectorAll('.di-check')].filter(el => el.checked).map(el => _bpCandidates[+el.dataset.k]);
+  if (picked.length === 0) { toast('チェックした商品がありません'); return; }
+  if (!confirm(picked.length + ' 件の確定価格を、在庫管理アプリの価格に変えますか？')) return;
+  saveUndo();
+  picked.forEach(c => { products[c.i].confirmedPrice = c.next; });
+  calcAll();
+  diCloseModal();
+  toast(picked.length + ' 件の確定価格を在庫管理アプリの価格にそろえました（↩ で元に戻せます）');
+}
+
+window.openBijouPriceImport = openBijouPriceImport;
+window.applyBijouPriceImport = applyBijouPriceImport;
 
 // ===== INIT =====
 let _hasLocal = false;
