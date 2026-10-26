@@ -425,6 +425,7 @@ canvas { max-width: 100%; }
         <button class="btn btn-outline btn-sm" onclick="document.getElementById('import-products-file').click()">📂 Excelから読込</button>
         <button class="btn btn-outline btn-sm" onclick="openDeliveryImport()" style="color:#2E7BB5;border-color:#2E7BB5;" title="納品書アプリの最新の納品書から、グラム数・制作費・石代・パーツ代を取り込みます">📦 納品書から取込</button>
         <button class="btn btn-outline btn-sm" onclick="openBijouPriceImport()" style="color:#2D5E3A;border-color:#4A7C59;" title="在庫管理アプリ（BIJOU Manager）の価格を、確定価格に取り込みます">🏷 在庫管理の価格を取込</button>
+        <button class="btn btn-outline btn-sm" onclick="openReviewList()" style="color:#C25C5C;border-color:#C25C5C;font-weight:600;" title="原価率が上限を超えている商品を一覧にします">⚠ 見直しリスト</button>
         <input type="file" id="import-products-file" accept=".xlsx" style="display:none" onchange="importProducts(this)">
       </div>
     </div>
@@ -4917,6 +4918,112 @@ function applyBijouPriceImport() {
 
 window.openBijouPriceImport = openBijouPriceImport;
 window.applyBijouPriceImport = applyBijouPriceImport;
+
+// ===== 見直しリスト =====
+// 今の相場設定で計算した原価 ÷ 確定価格 ＝ 原価率。上限を超える商品だけを、高い順に並べる。
+// 「相場が上がったら」の想定も入れられる。おすすめ価格（今の計算価格）を確定価格にすることもできる。
+const REVIEW_PREF_KEY = 'bijou_price_review_pref';
+let _rvRows = [];
+let _rvPref = { limit: 38, rise: 0, mat: 'all' };
+try { Object.assign(_rvPref, JSON.parse(localStorage.getItem(REVIEW_PREF_KEY) || '{}')); } catch(e) {}
+
+function openReviewList() {
+  renderReviewList();
+}
+
+function rvSetPref(key, value) {
+  _rvPref[key] = (key === 'mat') ? value : (parseFloat(value) || 0);
+  try { localStorage.setItem(REVIEW_PREF_KEY, JSON.stringify(_rvPref)); } catch(e) {}
+  renderReviewList();
+}
+
+function renderReviewList() {
+  const yen = n => Math.round(n).toLocaleString();
+  const limit = _rvPref.limit, rise = _rvPref.rise / 100;
+  const matName = { k18: 'K18', k10: 'K10', pt: 'Pt', sv: 'SV' };
+  let noPrice = 0;
+  const rows = [];
+  products.forEach((p, i) => {
+    if (_rvPref.mat !== 'all' && p.material !== _rvPref.mat) return;
+    const conf = parseFloat(p.confirmedPrice) || 0;
+    if (!conf) { noPrice++; return; }
+    calcProduct(p);
+    const metal = p._metalCost || 0;
+    const cost = (p.cost || 0) + metal * rise;          // 相場が上がった分だけ地金代を増やす
+    const rate = cost / conf * 100;
+    if (rate <= limit) return;
+    rows.push({ i, p, conf, cost, rate, rec: p.price || 0, metalShare: p.cost ? metal / p.cost * 100 : 0 });
+  });
+  rows.sort((a, b) => b.rate - a.rate);
+  _rvRows = rows;
+
+  const chip = (val, label) => '<button class="btn btn-sm ' + (_rvPref.mat === val ? 'btn-gold' : 'btn-outline') + '" onclick="rvSetPref(\'mat\',\'' + val + '\')">' + label + '</button>';
+  const color = r => r > limit + 7 ? '#C25C5C' : r > limit + 3 ? '#D2691E' : '#B8860B';
+
+  let html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">'
+    + '<div style="font-size:16px;font-weight:600;">⚠ 見直しリスト</div>'
+    + '<button class="btn btn-outline btn-sm" onclick="diCloseModal()">閉じる</button></div>'
+    + '<p style="font-size:12px;color:#666;margin-bottom:10px;">今の相場設定で計算した原価 ÷ 確定価格 が、上限を超えている商品です（高い順）。'
+    + '「おすすめ価格」は、今の相場と原価率の設定で計算した価格です。</p>'
+    + '<div style="display:flex;flex-wrap:wrap;gap:14px;align-items:center;font-size:12px;margin-bottom:12px;padding:10px 12px;background:#f8f6f0;border-radius:8px;">'
+    + '<label>原価率の上限 <input type="number" value="' + limit + '" step="1" style="width:56px;" onchange="rvSetPref(\'limit\',this.value)"> %</label>'
+    + '<label>相場の上昇を想定 <select onchange="rvSetPref(\'rise\',this.value)">'
+    + [0, 5, 10, 15, 20].map(v => '<option value="' + v + '"' + (_rvPref.rise === v ? ' selected' : '') + '>' + (v ? '+' + v + '%' : 'なし（今の相場）') + '</option>').join('')
+    + '</select></label>'
+    + '<span style="display:flex;gap:4px;">' + chip('all', '全て') + chip('k18', 'K18') + chip('k10', 'K10') + chip('pt', 'Pt') + chip('sv', 'SV') + '</span>'
+    + '</div>'
+    + '<p style="font-size:13px;margin-bottom:8px;">上限を超えている商品：<b style="font-size:16px;">' + rows.length + '</b> 件'
+    + (noPrice ? '　<span style="color:#999;font-size:11px;">（確定価格がない ' + noPrice + ' 件は対象外）</span>' : '') + '</p>';
+
+  if (rows.length === 0) {
+    html += '<p style="font-size:13px;">上限を超えている商品はありません ✅</p>';
+  } else {
+    html += '<div style="margin-bottom:8px;display:flex;gap:6px;">'
+      + '<button class="btn btn-outline btn-sm" onclick="diCheckAll(true)">すべて選ぶ</button>'
+      + '<button class="btn btn-outline btn-sm" onclick="diCheckAll(false)">すべて外す</button></div>'
+      + '<table style="width:100%;border-collapse:collapse;font-size:11px;">'
+      + '<tr style="background:#f5f2ea;text-align:left;"><th style="padding:6px;"></th><th>型番・商品名</th><th>金種</th><th style="text-align:right;">グラム</th>'
+      + '<th style="text-align:right;">原価' + (rise ? '（想定）' : '') + '</th><th style="text-align:right;">確定価格</th><th style="text-align:right;">原価率</th>'
+      + '<th style="text-align:right;">おすすめ価格</th><th style="text-align:right;">差</th></tr>';
+    rows.forEach((r, k) => {
+      const diff = r.rec - r.conf;
+      html += '<tr style="border-top:1px solid #eee;">'
+        + '<td style="padding:6px;"><input type="checkbox" class="di-check" data-k="' + k + '"></td>'
+        + '<td><b>' + (r.p.codeFull || '') + '</b><br><span style="color:#888;">' + (r.p.name || '') + '</span></td>'
+        + '<td>' + (matName[r.p.material] || r.p.material || '') + '</td>'
+        + '<td style="text-align:right;">' + (Math.round((r.p._calcGram || 0) * 100) / 100) + 'g</td>'
+        + '<td style="text-align:right;">' + yen(r.cost) + '<br><span style="color:#aaa;">地金 ' + Math.round(r.metalShare) + '%</span></td>'
+        + '<td style="text-align:right;">' + yen(r.conf) + '</td>'
+        + '<td style="text-align:right;font-weight:700;color:' + color(r.rate) + ';">' + r.rate.toFixed(1) + '%</td>'
+        + '<td style="text-align:right;"><b>' + (r.rec ? yen(r.rec) : '-') + '</b></td>'
+        + '<td style="text-align:right;color:' + (diff >= 0 ? '#2D5E3A' : '#C25C5C') + ';">' + (r.rec ? (diff >= 0 ? '+' : '') + yen(diff) : '-') + '</td></tr>';
+    });
+    html += '</table>'
+      + '<div style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end;align-items:center;">'
+      + '<span style="font-size:11px;color:#888;">チェックした商品の確定価格を「おすすめ価格」に変えます（前の価格は「前回確定価格」に残ります）</span>'
+      + '<button class="btn btn-gold btn-sm" onclick="applyReviewPrices()">✅ おすすめ価格で確定</button></div>';
+  }
+  diShowModal(html);
+}
+
+function applyReviewPrices() {
+  const picked = [...document.querySelectorAll('.di-check')].filter(el => el.checked).map(el => _rvRows[+el.dataset.k]).filter(r => r.rec > 0);
+  if (picked.length === 0) { toast('チェックした商品がありません'); return; }
+  if (!confirm(picked.length + ' 件の確定価格を、おすすめ価格に変えますか？\n（BIJOU マネージャーの価格は、まだ変わりません）')) return;
+  saveUndo();
+  picked.forEach(r => {
+    const p = products[r.i];
+    p.prevConfirmedPrice = p.confirmedPrice;
+    p.confirmedPrice = r.rec;
+  });
+  calcAll();
+  toast(picked.length + ' 件の確定価格を更新しました（↩ で元に戻せます）');
+  renderReviewList();
+}
+
+window.openReviewList = openReviewList;
+window.rvSetPref = rvSetPref;
+window.applyReviewPrices = applyReviewPrices;
 
 // ===== INIT =====
 let _hasLocal = false;
