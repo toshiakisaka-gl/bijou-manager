@@ -870,11 +870,15 @@ tr:hover td{background:var(--cream);}
       <p class="section-sub">販売実績・売上集計</p>
     </div>
     <div class="flex-gap">
+      <label id="sales-current-cost-wrap" style="display:flex;align-items:center;gap:6px;font-size:12px;padding:4px 10px;border:1px solid var(--gold);border-radius:8px;cursor:pointer;background:#FFF8E8;" title="過去の売上も、今の商品の原価で粗利を計算して表示します（売上の記録は変えません）">
+        <input type="checkbox" id="sales-use-current-cost" onchange="renderSales()"> 今の原価で計算する
+      </label>
       <button class="btn btn-outline btn-sm" onclick="exportSalesExcel()" style="color:var(--success);border-color:var(--success);">📤 Excel出力</button>
     </div>
   </div>
 
   <!-- 集計カード -->
+  <div id="sales-cost-mode-note" style="display:none;font-size:12px;padding:8px 12px;margin-bottom:12px;background:#FFF8E8;border:1px solid var(--gold);border-radius:8px;line-height:1.6;"></div>
   <div class="stats-row" id="sales-stats-row" style="margin-bottom:20px;"></div>
 
   <!-- 絞り込み -->
@@ -1862,7 +1866,7 @@ tr:hover td{background:var(--cream);}
 <script type="module">
 // ===== バージョン情報 =====
 // 新しく書き出す(出力する)たびに、日付を YYYY.MM.DD 形式で更新してください
-const APP_VERSION = 'v2026.10.26-65';
+const APP_VERSION = 'v2026.10.27-66';
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc, onSnapshot, writeBatch, getDoc }
@@ -5970,6 +5974,27 @@ function renderSales() {
   if (loc) sales = sales.filter(s => s.location === loc);
   if (type) sales = sales.filter(s => (s.salesType||'').includes(type));
 
+  // 「今の原価で計算する」：表示だけ、今の商品の原価に置き換える（売上の記録・Excel出力は変えない）
+  const useCurrentCost = !STORE_MODE && document.getElementById('sales-use-current-cost')?.checked;
+  const costNoteEl = document.getElementById('sales-cost-mode-note');
+  if (useCurrentCost) {
+    let replaced = 0, kept = 0;
+    sales = sales.map(s => {
+      const m = s.code ? products.find(x => x.code === s.code) : null;
+      if (m && (m.cost || 0) > 0) { replaced++; return Object.assign({}, s, { cost: m.cost }); }
+      kept++;
+      return s;
+    });
+    if (costNoteEl) {
+      costNoteEl.style.display = 'block';
+      costNoteEl.innerHTML = '🔄 <b>今の原価で計算しています。</b> ' + replaced + ' 件の売上を、今の商品の原価で計算'
+        + (kept ? '（' + kept + ' 件は商品が見つからない・原価が未登録のため、記録したときの原価のまま）' : '')
+        + '。<br><span style="color:var(--muted);">※ 表示だけの切り替えです。売上の記録と Excel 出力は、記録したときの原価のままです。</span>';
+    }
+  } else if (costNoteEl) {
+    costNoteEl.style.display = 'none';
+  }
+
   // 集計（新定義）
   const totalCustomerPrice = sales.reduce((a, s) => {
     const isDept = (s.salesType||'').includes('百貨店') || (s.salesType||'').includes('DRESSLAVE') || (s.salesType||'').includes('その他');
@@ -5985,6 +6010,7 @@ function renderSales() {
   const totalCost = sales.reduce((a, s) => a + (s.cost || 0) * (s.qty || 1), 0);
   const totalProfit = totalActualPrice - totalCost;
   const avgCostRate = totalActualPrice > 0 ? Math.round(totalCost / totalActualPrice * 100) : 0;
+  const totalSales = totalCustomerPrice;   // 合計行の「売上合計」（実売価格・税抜）。前は定義がなく、合計行でエラーになっていた
 
   // 統計カード
   const statsEl = document.getElementById('sales-stats-row');
@@ -9170,7 +9196,7 @@ function applyStoreMode() {
     #col-cost, #col-profit, #col-profit-list, #col-rate, #col-rate-list,
     label:has(#col-cost), label:has(#col-profit), label:has(#col-profit-list),
     label:has(#col-rate), label:has(#col-rate-list),
-    .stat-card-cost {
+    .stat-card-cost, #sales-current-cost-wrap, #sales-cost-mode-note {
       display:none !important;
     }
 
