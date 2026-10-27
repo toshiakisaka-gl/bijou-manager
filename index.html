@@ -1866,7 +1866,7 @@ tr:hover td{background:var(--cream);}
 <script type="module">
 // ===== バージョン情報 =====
 // 新しく書き出す(出力する)たびに、日付を YYYY.MM.DD 形式で更新してください
-const APP_VERSION = 'v2026.10.27-67';
+const APP_VERSION = 'v2026.10.27-68';
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc, onSnapshot, writeBatch, getDoc }
@@ -2820,14 +2820,15 @@ function plFmtDetail(key, v) {
 }
 
 // 例：「5.2g」「原価 98,000円」「工賃 18,000円／パーツ 0円／石 12,000円」
-function plDetailSegments(p, keys) {
+function plDetailSegments(p, keys, splitSub=false) {
   const d = plDetailOf(p);
   const segs = [];
   if (keys.includes('gram')) segs.push(plFmtDetail('gram', d.gram));
   if (keys.includes('cost')) segs.push('原価 ' + plFmtDetail('cost', d.cost));
   const sub = ['make','parts','gem'].filter(k => keys.includes(k))
     .map(k => `${PL_DETAIL_FIELDS.find(f => f.key === k).label} ${plFmtDetail(k, d[k])}`);
-  if (sub.length) segs.push(sub.join('／'));
+  if (splitSub) segs.push(...sub);
+  else if (sub.length) segs.push(sub.join('／'));
   return segs;
 }
 
@@ -3644,7 +3645,7 @@ function openMergePriceList() {
         <div id="mp-cols-row" style="margin-top:8px;">
           <label style="font-size:11px;color:#9A9080;display:block;margin-bottom:6px;">列数</label>
           <div style="display:flex;gap:8px;">
-            ${[2,3,4].map(n => `
+            ${[2,3,4,5].map(n => `
               <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;">
                 <input type="radio" name="mp-cols" value="${n}" ${n===2?'checked':''}> ${n}列
               </label>`).join('')}
@@ -3786,7 +3787,7 @@ function mpPageWrapper(bodyHTML, count) {
   w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
     <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400&display=swap" rel="stylesheet">
     <style>*{box-sizing:border-box;}body{margin:0;background:#E8E4DC;display:flex;justify-content:center;padding:28px;}
-    .page{background:#fff;box-shadow:0 8px 40px rgba(0,0,0,0.18);border-radius:4px;max-width:900px;width:100%;}
+    .page{background:#fff;box-shadow:0 8px 40px rgba(0,0,0,0.18);border-radius:4px;width:186mm;flex-shrink:0;}
     .bar{position:fixed;top:0;left:0;right:0;background:#2C2C2C;color:#E8D5B0;padding:9px 20px;font-family:sans-serif;font-size:12px;display:flex;justify-content:space-between;align-items:center;z-index:99;}
     .bar button{background:#C9A96E;color:#2C2C2C;border:none;padding:5px 16px;border-radius:4px;cursor:pointer;font-size:11px;}
     body{padding-top:48px;}
@@ -3797,7 +3798,20 @@ function mpPageWrapper(bodyHTML, count) {
       <span>🔗 金種まとめ価格表（${count}点）</span>
       <button onclick="window.print()">🖨 印刷/PDF保存</button>
     </div>
-    <div class="page">${html}</div></body></html>`);
+    <div class="page">${html}</div>
+    <script>
+    // カードの文字の部分を、いちばん高いものに合わせてそろえる（余計な余白を作らない・裁断しやすいよう同じ高さ）
+    function fitBlocks(){
+      ['fit-name','fit-price'].forEach(function(c){
+        var els=[].slice.call(document.getElementsByClassName(c)); if(!els.length) return;
+        els.forEach(function(e){ e.style.height='auto'; });
+        var h=0; els.forEach(function(e){ h=Math.max(h,e.scrollHeight); });
+        els.forEach(function(e){ e.style.height=(h+2)+'px'; });
+      });
+    }
+    fitBlocks(); window.addEventListener('load',fitBlocks);
+    if(document.fonts&&document.fonts.ready) document.fonts.ready.then(fitBlocks);
+    <\/script></body></html>`);
   w.document.close();
 }
 
@@ -3822,7 +3836,7 @@ function mpExportTagPDF(items, cols, detailKeys=[]) {
       ? it.prices.map((pr, i) => `
       <div style="display:flex;justify-content:center;align-items:baseline;gap:2px 8px;flex-wrap:wrap;${gothic}padding:4px 0;${i>0?'border-top:1px solid #E8D5B0;':''}">
         <span style="font-size:${cols<=2?11:9}px;padding:1px 6px;border-radius:3px;font-weight:700;${MP_MAT_STYLE[pr.material]||''}">${pr.material}</span>
-        ${plDetailSegments(pr.product, detailKeys).map(s => `<span style="white-space:nowrap;font-size:9px;color:#6B6152;">${s}</span>`).join('')}
+        ${plDetailSegments(pr.product, detailKeys, cols >= 4).map(s => `<span style="white-space:nowrap;font-size:9px;color:#6B6152;">${s}</span>`).join('')}
         <span style="font-size:${cols<=2?14:cols===3?12:11}px;font-weight:700;color:#2C2C2C;white-space:nowrap;">${pr.price.toLocaleString()}円</span>
       </div>`).join('')
       : it.prices.map(pr => `
@@ -3834,11 +3848,11 @@ function mpExportTagPDF(items, cols, detailKeys=[]) {
     return `<div style="width:${colW}%;display:inline-block;vertical-align:top;padding:6px;box-sizing:border-box;page-break-inside:avoid;">
       <div style="border:1px solid #E8D5B0;border-radius:8px;overflow:hidden;background:white;">
         <div style="width:100%;aspect-ratio:1/1;background:#f8f5f0;overflow:hidden;">${img}</div>
-        <div style="height:${nameBlockH}px;padding:8px 10px 0;text-align:center;box-sizing:border-box;overflow:hidden;">
+        <div class="fit-name" style="height:${nameBlockH}px;padding:8px 10px 0;text-align:center;box-sizing:border-box;overflow:hidden;">
           <div style="font-family:'Cormorant Garamond',serif;font-size:${cols<=2?17:cols===3?14:12}px;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${it.name}</div>
           <div style="${gothic}font-size:${cols<=2?10:9}px;color:#9A9080;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${it.codeDisplay}</div>
         </div>
-        <div style="height:${priceBlockH}px;padding:0 10px 8px;box-sizing:border-box;display:flex;flex-direction:column;justify-content:${detailKeys.length?'flex-start':'center'};gap:${detailKeys.length?0:4}px;">${priceLines}</div>
+        <div class="fit-price" style="height:${priceBlockH}px;padding:0 10px 8px;box-sizing:border-box;display:flex;flex-direction:column;justify-content:${detailKeys.length?'flex-start':'center'};gap:${detailKeys.length?0:4}px;">${priceLines}</div>
       </div>
     </div>`;
   }).join('');
