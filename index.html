@@ -1866,7 +1866,7 @@ tr:hover td{background:var(--cream);}
 <script type="module">
 // ===== バージョン情報 =====
 // 新しく書き出す(出力する)たびに、日付を YYYY.MM.DD 形式で更新してください
-const APP_VERSION = 'v2026.10.27-66';
+const APP_VERSION = 'v2026.10.27-67';
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc, onSnapshot, writeBatch, getDoc }
@@ -2736,6 +2736,120 @@ function exportBackup() {
 }
 window.exportBackup = exportBackup;
 
+// ===== 価格表の社内用項目（グラム・原価・工賃・パーツ・石） =====
+// グラム・工賃・パーツ・石は価格アプリ（price_items）から型番で探して使う。原価は BIJOU の原価。商品データは変更しない。
+const PL_DETAIL_FIELDS = [
+  { key:'gram',  label:'グラム' },
+  { key:'cost',  label:'原価' },
+  { key:'make',  label:'工賃' },
+  { key:'parts', label:'パーツ' },
+  { key:'gem',   label:'石' },
+];
+let plPriceAppMap = null;      // 型番 → 価格アプリの商品
+let plPriceAppLoading = null;
+
+function plNormCode(c) {
+  return String(c||'').trim().toUpperCase().replace(/[‐－―ー−]/g, '-').replace(/\s+/g, '');
+}
+
+// 価格表の設定画面を開いたときに、価格アプリのデータを先に読み込んでおく（出力ボタンを押したときに待たないように）
+function plLoadPriceApp() {
+  if (STORE_MODE || plPriceAppMap || plPriceAppLoading || !dbReady) return;
+  plPriceAppLoading = getDocs(collection(db, 'price_items')).then(snap => {
+    const map = {};
+    snap.forEach(d => { const it = d.data(); const c = plNormCode(it.codeFull); if (c && !(c in map)) map[c] = it; });
+    plPriceAppMap = map;
+  }).catch(e => { console.warn('価格アプリのデータを読み込めませんでした', e); })
+    .finally(() => { plPriceAppLoading = null; plUpdateDetailStatus(); });
+}
+
+function plUpdateDetailStatus() {
+  const text = plPriceAppMap ? `価格アプリのデータ ${Object.keys(plPriceAppMap).length}件を読み込みました`
+    : plPriceAppLoading ? '価格アプリのデータを読み込み中…'
+    : '価格アプリのデータを読み込めませんでした（グラム・工賃・パーツ・石は「－」になります）';
+  document.querySelectorAll('.pl-detail-status').forEach(el => { el.textContent = text; });
+}
+
+function plDetailOptionsHTML(prefix) {
+  if (STORE_MODE) return '';
+  return `
+      <div style="margin-bottom:14px;padding:10px 12px;background:var(--cream);border-radius:8px;">
+        <label style="font-size:12px;font-weight:500;display:block;margin-bottom:6px;">🔒 載せる項目（社内用）</label>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;">
+          ${PL_DETAIL_FIELDS.map(f => `
+            <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;">
+              <input type="checkbox" class="${prefix}-detail" value="${f.key}"> ${f.label}
+            </label>`).join('')}
+        </div>
+        <div class="pl-detail-status" style="font-size:10px;color:#9A9080;margin-top:6px;"></div>
+        <div style="font-size:10px;color:#9A9080;">※ 原価は BIJOU の原価、それ以外は価格アプリの数字です。お店やお客様に渡す価格表では外してください</div>
+      </div>`;
+}
+
+function plReadDetailKeys(prefix) {
+  if (STORE_MODE) return [];
+  const on = new Set([...document.querySelectorAll(`.${prefix}-detail:checked`)].map(el => el.value));
+  return PL_DETAIL_FIELDS.map(f => f.key).filter(k => on.has(k));
+}
+
+// 出力してよいか（価格アプリのデータがまだ読み込み中なら待ってもらう）
+function plDetailReady(keys) {
+  if (keys.some(k => k !== 'cost') && plPriceAppLoading) {
+    toast('価格アプリのデータを読み込み中です。少し待ってから、もう一度「出力する」を押してください', 'error');
+    return false;
+  }
+  return true;
+}
+
+// { gram, cost, make, parts, gem }（数字が無いものは null）
+function plDetailOf(p) {
+  const it = plPriceAppMap?.[plNormCode(p.code)];
+  const num = v => { const n = parseFloat(v); return isFinite(n) ? n : null; };
+  return {
+    gram: it ? num(it.gram) : null,
+    cost: (p.cost||0) > 0 ? p.cost : null,
+    make: it ? num(it.make) : null,
+    parts: it ? num(it.parts) : null,
+    gem: it ? num(it.gem) : null,
+  };
+}
+
+function plFmtDetail(key, v) {
+  if (v === null || v === undefined) return '－';
+  return key === 'gram' ? `${Math.round(v*100)/100}g` : `${Math.round(v).toLocaleString()}円`;
+}
+
+// 例：「5.2g」「原価 98,000円」「工賃 18,000円／パーツ 0円／石 12,000円」
+function plDetailSegments(p, keys) {
+  const d = plDetailOf(p);
+  const segs = [];
+  if (keys.includes('gram')) segs.push(plFmtDetail('gram', d.gram));
+  if (keys.includes('cost')) segs.push('原価 ' + plFmtDetail('cost', d.cost));
+  const sub = ['make','parts','gem'].filter(k => keys.includes(k))
+    .map(k => `${PL_DETAIL_FIELDS.find(f => f.key === k).label} ${plFmtDetail(k, d[k])}`);
+  if (sub.length) segs.push(sub.join('／'));
+  return segs;
+}
+
+function plDetailSpans(p, keys) {
+  return plDetailSegments(p, keys).map(s => `<span style="white-space:nowrap;">${s}</span>`).join('');
+}
+
+function plDetailHTML(p, keys, extraStyle='') {
+  if (!keys.length) return '';
+  return `<div style="display:flex;flex-wrap:wrap;gap:2px 10px;font-family:'Noto Sans JP','Hiragino Kaku Gothic Pro','Meiryo',sans-serif;font-size:9px;color:#6B6152;line-height:1.5;${extraStyle}">${plDetailSpans(p, keys)}</div>`;
+}
+
+function plDetailExcelHeaders(keys, prefix='') {
+  const names = { gram:'グラム(g)', cost:'原価', make:'工賃', parts:'パーツ代', gem:'石代' };
+  return keys.map(k => prefix + names[k]);
+}
+
+function plDetailExcelValues(p, keys) {
+  const d = plDetailOf(p);
+  return keys.map(k => d[k] === null ? '' : (k === 'gram' ? Math.round(d[k]*100)/100 : Math.round(d[k])));
+}
+
 // ===== 価格表出力 =====
 function exportPriceList() {
   // 現在の絞り込み状態を取得
@@ -2872,6 +2986,8 @@ function exportPriceList() {
         </div>
       </div>
 
+      ${plDetailOptionsHTML('pl')}
+
       <div style="margin-bottom:14px;">
         <label style="font-size:12px;font-weight:500;display:block;margin-bottom:8px;">PDF レイアウト</label>
         <div style="display:flex;gap:10px;margin-bottom:10px;">
@@ -2946,7 +3062,8 @@ function exportPriceList() {
   dialog._cat = cat;
   dialog._mat = mat;
   // クリックイベントが伝播した後に表示
-  setTimeout(() => document.body.appendChild(dialog), 10);
+  setTimeout(() => { document.body.appendChild(dialog); plUpdateDetailStatus(); }, 10);
+  plLoadPriceApp();
 }
 window.exportPriceList = exportPriceList;
 
@@ -3115,16 +3232,18 @@ function executePriceListExport() {
   const includeStock = document.getElementById('pl-include-stock')?.checked || false;
   const stockLocation = document.getElementById('pl-stock-location')?.value || 'all';
   const tepraCols = ['A','B','C','D','E','F','G','H'].map(c => document.getElementById(`pl-tepra-col-${c}`)?.value || 'none');
+  const detailKeys = plReadDetailKeys('pl');
+  if (!plDetailReady(detailKeys)) return;
   dialog.remove();
 
   if (!list.length) { toast('出力する商品がありません（除外後0件）', 'error'); return; }
 
   if (format === 'pdf') {
-    exportPriceListPDF(list, cat, mat, layout, cols, includeStock, stockLocation);
+    exportPriceListPDF(list, cat, mat, layout, cols, includeStock, stockLocation, detailKeys);
   } else if (format === 'tepra') {
     exportPriceListTepra(list, tepraCols);
   } else {
-    exportPriceListExcel(list, cat, mat, includeStock, stockLocation);
+    exportPriceListExcel(list, cat, mat, includeStock, stockLocation, detailKeys);
   }
 }
 window.executePriceListExport = executePriceListExport;
@@ -3140,7 +3259,7 @@ function updateLayoutPreview() {
 }
 window.updateLayoutPreview = updateLayoutPreview;
 
-function exportPriceListPDF(list, cat, mat, layout='list', cols=2, includeStock=false, stockLocation='all') {
+function exportPriceListPDF(list, cat, mat, layout='list', cols=2, includeStock=false, stockLocation='all', detailKeys=[]) {
   mergeLocalImages();
   const s = settings;
   const accent = s.accentColor || '#C9A96E';
@@ -3200,6 +3319,7 @@ function exportPriceListPDF(list, cat, mat, layout='list', cols=2, includeStock=
           <div style="${gothic}font-size:10px;color:#9A9080;margin-top:2px;">${p.code||''} ${matBadge}</div>
           ${buildStockInfoHTML(p)}
         </td>
+        ${detailKeys.length ? `<td style="padding:8px 10px;border-bottom:1px solid #f0ebe0;">${plDetailHTML(p, detailKeys, 'font-size:10px;')}</td>` : ''}
         <td style="padding:8px 10px;border-bottom:1px solid #f0ebe0;text-align:right;${gothic}font-size:13px;font-weight:700;white-space:nowrap;">${(p.price||0).toLocaleString()}円</td>
         <td style="padding:8px 10px;border-bottom:1px solid #f0ebe0;text-align:right;${gothic}font-size:11px;color:#9A9080;white-space:nowrap;">税込 ${Math.round((p.price||0)*1.1).toLocaleString()}円</td>
       </tr>`;
@@ -3209,6 +3329,7 @@ function exportPriceListPDF(list, cat, mat, layout='list', cols=2, includeStock=
       <thead><tr>
         <th style="padding:8px 10px;border-bottom:2px solid ${accent};color:#9A9080;font-weight:400;font-size:10px;width:60px;">画像</th>
         <th style="padding:8px 10px;border-bottom:2px solid ${accent};color:#9A9080;font-weight:400;font-size:10px;text-align:left;">商品名 / 型番</th>
+        ${detailKeys.length ? `<th style="padding:8px 10px;border-bottom:2px solid ${accent};color:#9A9080;font-weight:400;font-size:10px;text-align:left;">${detailKeys.map(k => PL_DETAIL_FIELDS.find(f => f.key === k).label).join('・')}（社内用）</th>` : ''}
         <th style="padding:8px 10px;border-bottom:2px solid ${accent};color:#9A9080;font-weight:400;font-size:10px;text-align:right;">売価（税抜）</th>
         <th style="padding:8px 10px;border-bottom:2px solid ${accent};color:#9A9080;font-weight:400;font-size:10px;text-align:right;">税込価格</th>
       </tr></thead>
@@ -3218,7 +3339,7 @@ function exportPriceListPDF(list, cat, mat, layout='list', cols=2, includeStock=
   } else if (layout === 'tag') {
     // ===== タグ表示（大きい写真・裁断用に全カードを同じ高さ・幅に揃える） =====
     const colW = Math.floor(100/cols);
-    const textH = cols <= 2 ? 118 : cols === 3 ? 100 : 88;
+    const textH = (cols <= 2 ? 118 : cols === 3 ? 100 : 88) + (detailKeys.length ? (cols <= 2 ? 32 : cols === 3 ? 44 : 56) : 0);
     const cards = list.map(p => {
       const img = p.image
         ? `<img src="${p.image}" style="width:100%;height:100%;object-fit:contain;">`
@@ -3230,6 +3351,7 @@ function exportPriceListPDF(list, cat, mat, layout='list', cols=2, includeStock=
           <div style="height:${textH}px;padding:10px 12px;text-align:center;box-sizing:border-box;overflow:hidden;">
             <div style="font-family:'Cormorant Garamond',serif;font-size:${cols<=2?18:cols===3?15:13}px;margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${p.name}</div>
             <div style="${gothic}font-size:${cols<=2?11:10}px;color:#9A9080;margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${p.code||''} ${matBadge}</div>
+            ${plDetailHTML(p, detailKeys, 'justify-content:center;margin-bottom:4px;')}
             <div style="${gothic}font-size:${cols<=2?17:cols===3?14:12}px;font-weight:700;color:#2C2C2C;white-space:nowrap;">${(p.price||0).toLocaleString()}円</div>
             <div style="${gothic}font-size:${cols<=2?12:10}px;color:#9A9080;white-space:nowrap;">税込 ${Math.round((p.price||0)*1.1).toLocaleString()}円</div>
           </div>
@@ -3254,6 +3376,7 @@ function exportPriceListPDF(list, cat, mat, layout='list', cols=2, includeStock=
             <div style="flex:1;min-width:0;">
               <div style="font-family:'Cormorant Garamond',serif;font-size:${cols<=2?14:12}px;margin-bottom:3px;">${p.name}</div>
               <div style="${gothic}font-size:9px;color:#9A9080;margin-bottom:4px;">${p.code||''} ${matBadge}</div>
+              ${plDetailHTML(p, detailKeys, 'margin-bottom:4px;')}
               <div style="${gothic}font-size:${cols<=2?13:11}px;font-weight:700;color:#2C2C2C;">${(p.price||0).toLocaleString()}円</div>
               <div style="${gothic}font-size:10px;color:#9A9080;">税込 ${Math.round((p.price||0)*1.1).toLocaleString()}円</div>
               ${buildStockInfoHTML(p)}
@@ -3307,14 +3430,14 @@ function exportPriceListPDF(list, cat, mat, layout='list', cols=2, includeStock=
   w.document.close();
 }
 
-function exportPriceListExcel(list, cat, mat, includeStock=false, stockLocation='all') {
+function exportPriceListExcel(list, cat, mat, includeStock=false, stockLocation='all', detailKeys=[]) {
   if (!window.XLSX) { toast('XLSXライブラリ読み込み中です', 'error'); return; }
   const XLSX = window.XLSX;
   const today = new Date().toISOString().slice(0,10);
   const locNames = {main:'メイン',kyoto:'京都',dresslave:'DRESSLAVE',okinawa:'沖縄'};
   const locKeys = stockLocation === 'all' ? ['main','kyoto','dresslave','okinawa'] : [stockLocation];
 
-  const headers = ['商品名', '型番', '金種', 'カテゴリ', '売価（税抜）', '税込価格（10%）'];
+  const headers = ['商品名', '型番', '金種', 'カテゴリ', ...plDetailExcelHeaders(detailKeys), '売価（税抜）', '税込価格（10%）'];
   if (includeStock) {
     locKeys.forEach(loc => headers.push(`${locNames[loc]}在庫数`, `${locNames[loc]}号数内訳`));
     if (stockLocation === 'all') headers.push('在庫合計');
@@ -3322,7 +3445,7 @@ function exportPriceListExcel(list, cat, mat, includeStock=false, stockLocation=
   headers.push('メモ');
 
   const rows = list.map(p => {
-    const row = [p.name||'', p.code||'', p.material||'', p.category||'', p.price||0, Math.round((p.price||0)*1.1)];
+    const row = [p.name||'', p.code||'', p.material||'', p.category||'', ...plDetailExcelValues(p, detailKeys), p.price||0, Math.round((p.price||0)*1.1)];
     if (includeStock) {
       let grand = 0;
       locKeys.forEach(loc => {
@@ -3341,7 +3464,7 @@ function exportPriceListExcel(list, cat, mat, includeStock=false, stockLocation=
 
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-  const baseCols = [20,15,8,12,12,14];
+  const baseCols = [20,15,8,12,...detailKeys.map(()=>10),12,14];
   const stockCols = includeStock ? locKeys.flatMap(()=>[10,26]).concat(stockLocation==='all'?[10]:[]) : [];
   ws['!cols'] = [...baseCols, ...stockCols, 20].map(w=>({wch:w}));
   XLSX.utils.book_append_sheet(wb, ws, '価格表');
@@ -3480,6 +3603,8 @@ function openMergePriceList() {
         </div>
       </div>
 
+      ${plDetailOptionsHTML('mp')}
+
       <div style="margin-bottom:14px;border:1px solid #E8D5B0;border-radius:8px;">
         <div onclick="mpToggleChecklist()" style="padding:10px 12px;cursor:pointer;display:flex;align-items:center;gap:6px;font-size:12px;font-weight:500;user-select:none;">
           <span id="mp-checklist-arrow">▶</span> グループを選択　<span style="font-weight:400;color:#9A9080;">全${groups.length}グループ・クリックで開閉</span>
@@ -3533,6 +3658,8 @@ function openMergePriceList() {
       </div>
     </div>`;
   document.body.appendChild(dialog);
+  plLoadPriceApp();
+  plUpdateDetailStatus();
 }
 window.openMergePriceList = openMergePriceList;
 
@@ -3592,6 +3719,8 @@ function mpExecute() {
   const cols = parseInt(document.querySelector('input[name="mp-cols"]:checked')?.value || '2');
 
   if (!includedMaterials.length) { toast('表示する金種を1つ以上選んでください', 'error'); return; }
+  const detailKeys = plReadDetailKeys('mp');
+  if (!plDetailReady(detailKeys)) return;
 
   const items = groups.map(g => {
     let imageMember = null;
@@ -3604,7 +3733,7 @@ function mpExecute() {
     const prices = MP_MATERIALS.filter(mat => includedMaterials.includes(mat))
       .map(mat => g.members.find(p => p.material === mat))
       .filter(Boolean)
-      .map(p => ({ material: p.material, price: p.price||0, code: p.code||'' }));
+      .map(p => ({ material: p.material, price: p.price||0, code: p.code||'', product: p }));
 
     const codeDisplay = codeMode === 'base'
       ? g.baseCode
@@ -3623,9 +3752,9 @@ function mpExecute() {
 
   document.getElementById('mp-dialog').remove();
 
-  if (format === 'tag') mpExportTagPDF(items, cols);
-  else if (format === 'list') mpExportListPDF(items);
-  else mpExportExcel(items);
+  if (format === 'tag') mpExportTagPDF(items, cols, detailKeys);
+  else if (format === 'list') mpExportListPDF(items, detailKeys);
+  else mpExportExcel(items, detailKeys);
 }
 window.mpExecute = mpExecute;
 
@@ -3672,7 +3801,7 @@ function mpPageWrapper(bodyHTML, count) {
   w.document.close();
 }
 
-function mpExportTagPDF(items, cols) {
+function mpExportTagPDF(items, cols, detailKeys=[]) {
   mergeLocalImages();
   const gothic = "font-family:'Noto Sans JP','Hiragino Kaku Gothic Pro','Meiryo',sans-serif;";
   const colW = Math.floor(100/cols);
@@ -3680,13 +3809,23 @@ function mpExportTagPDF(items, cols) {
   // 金種数が商品によって違っても商品名が隠れたり高さがズレたりしないようにする
   const maxPriceLines = Math.max(...items.map(it => it.prices.length), 1);
   const nameBlockH = cols <= 2 ? 54 : cols === 3 ? 46 : 40;
-  const perLineH = cols <= 2 ? 34 : cols === 3 ? 28 : 24;
+  // 社内用の項目を載せるときは、金種ごとに「金種・グラム・原価・詳細・価格」を並べ、入りきらなければ2行に折り返す
+  const perLineH = detailKeys.length
+    ? (cols <= 2 ? 56 : cols === 3 ? 72 : 88)
+    : (cols <= 2 ? 34 : cols === 3 ? 28 : 24);
   const priceBlockH = maxPriceLines * perLineH;
   const cards = items.map(it => {
     const img = it.image
       ? `<img src="${it.image}" style="width:100%;height:100%;object-fit:contain;">`
       : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:${cols<=2?'56px':'36px'};background:#F0EBE0;">💍</div>`;
-    const priceLines = it.prices.map(pr => `
+    const priceLines = detailKeys.length
+      ? it.prices.map((pr, i) => `
+      <div style="display:flex;justify-content:center;align-items:baseline;gap:2px 8px;flex-wrap:wrap;${gothic}padding:4px 0;${i>0?'border-top:1px solid #E8D5B0;':''}">
+        <span style="font-size:${cols<=2?11:9}px;padding:1px 6px;border-radius:3px;font-weight:700;${MP_MAT_STYLE[pr.material]||''}">${pr.material}</span>
+        ${plDetailSegments(pr.product, detailKeys).map(s => `<span style="white-space:nowrap;font-size:9px;color:#6B6152;">${s}</span>`).join('')}
+        <span style="font-size:${cols<=2?14:cols===3?12:11}px;font-weight:700;color:#2C2C2C;white-space:nowrap;">${pr.price.toLocaleString()}円</span>
+      </div>`).join('')
+      : it.prices.map(pr => `
       <div style="display:flex;justify-content:center;align-items:baseline;gap:6px;flex-wrap:wrap;${gothic}">
         <span style="font-size:${cols<=2?11:9}px;padding:1px 6px;border-radius:3px;font-weight:700;${MP_MAT_STYLE[pr.material]||''}">${pr.material}</span>
         <span style="font-size:${cols<=2?15:cols===3?13:11}px;font-weight:700;color:#2C2C2C;">${pr.price.toLocaleString()}円</span>
@@ -3699,21 +3838,28 @@ function mpExportTagPDF(items, cols) {
           <div style="font-family:'Cormorant Garamond',serif;font-size:${cols<=2?17:cols===3?14:12}px;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${it.name}</div>
           <div style="${gothic}font-size:${cols<=2?10:9}px;color:#9A9080;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${it.codeDisplay}</div>
         </div>
-        <div style="height:${priceBlockH}px;padding:0 10px 8px;box-sizing:border-box;display:flex;flex-direction:column;justify-content:center;gap:4px;">${priceLines}</div>
+        <div style="height:${priceBlockH}px;padding:0 10px 8px;box-sizing:border-box;display:flex;flex-direction:column;justify-content:${detailKeys.length?'flex-start':'center'};gap:${detailKeys.length?0:4}px;">${priceLines}</div>
       </div>
     </div>`;
   }).join('');
   mpPageWrapper(`<div style="margin:0 -6px;">${cards}</div>`, items.length);
 }
 
-function mpExportListPDF(items) {
+function mpExportListPDF(items, detailKeys=[]) {
   mergeLocalImages();
   const gothic = "font-family:'Noto Sans JP','Hiragino Kaku Gothic Pro','Meiryo',sans-serif;";
   const rows = items.map((it, i) => {
     const img = it.image
       ? `<img src="${it.image}" style="width:50px;height:50px;object-fit:contain;border-radius:4px;background:#f8f5f0;">`
       : `<div style="width:50px;height:50px;background:#F0EBE0;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:20px;">💍</div>`;
-    const priceBadges = it.prices.map(pr => `
+    // 社内用の項目を載せるときは、金種ごとに1行（入りきらなければ2行）にして、金種の間に線を入れる
+    const priceBadges = detailKeys.length ? it.prices.map((pr, i) => `
+      <div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 12px;padding:5px 0;${i>0?'border-top:1px solid #E8D5B0;':''}">
+        <span style="${gothic}font-size:9px;padding:1px 6px;border-radius:3px;font-weight:700;${MP_MAT_STYLE[pr.material]||''}">${pr.material}</span>
+        ${plDetailSegments(pr.product, detailKeys).map(s => `<span style="${gothic}font-size:10px;color:#6B6152;white-space:nowrap;">${s}</span>`).join('')}
+        <span style="${gothic}font-size:12px;font-weight:700;color:#2C2C2C;white-space:nowrap;margin-left:auto;">${pr.price.toLocaleString()}円</span>
+        <span style="${gothic}font-size:10px;color:#9A9080;white-space:nowrap;">(税込${Math.round(pr.price*1.1).toLocaleString()}円)</span>
+      </div>`).join('') : it.prices.map(pr => `
       <span style="display:inline-flex;align-items:baseline;gap:4px;margin-right:10px;">
         <span style="${gothic}font-size:9px;padding:1px 6px;border-radius:3px;font-weight:700;${MP_MAT_STYLE[pr.material]||''}">${pr.material}</span>
         <span style="${gothic}font-size:12px;font-weight:700;color:#2C2C2C;">${pr.price.toLocaleString()}円</span>
@@ -3732,29 +3878,34 @@ function mpExportListPDF(items) {
     <thead><tr>
       <th style="padding:8px 10px;border-bottom:2px solid #C9A96E;color:#9A9080;font-weight:400;font-size:10px;width:60px;">画像</th>
       <th style="padding:8px 10px;border-bottom:2px solid #C9A96E;color:#9A9080;font-weight:400;font-size:10px;text-align:left;">商品名 / 型番</th>
-      <th style="padding:8px 10px;border-bottom:2px solid #C9A96E;color:#9A9080;font-weight:400;font-size:10px;text-align:left;">価格（税抜・金種別）</th>
+      <th style="padding:8px 10px;border-bottom:2px solid #C9A96E;color:#9A9080;font-weight:400;font-size:10px;text-align:left;">${detailKeys.length ? `金種・${detailKeys.map(k => PL_DETAIL_FIELDS.find(f => f.key === k).label).join('・')}（社内用）・価格（税抜）` : '価格（税抜・金種別）'}</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
   mpPageWrapper(bodyHTML, items.length);
 }
 
-function mpExportExcel(items) {
+function mpExportExcel(items, detailKeys=[]) {
   if (!window.XLSX) { toast('XLSXライブラリ読み込み中です', 'error'); return; }
   const XLSX = window.XLSX;
   const today = new Date().toISOString().slice(0,10);
-  const headers = ['商品名', '型番表示', ...MP_MATERIALS.map(m=>`${m} 価格（税抜）`), ...MP_MATERIALS.map(m=>`${m} 税込価格`)];
+  // 金種ごとに「グラム・原価・工賃・パーツ・石（選んだものだけ）→ 価格」の順で列を並べる
+  const headers = ['商品名', '型番表示', ...MP_MATERIALS.flatMap(m=>[...plDetailExcelHeaders(detailKeys, `${m} `), `${m} 価格（税抜）`]), ...MP_MATERIALS.map(m=>`${m} 税込価格`)];
   const rows = items.map(it => {
-    const priceByMat = {};
-    it.prices.forEach(pr => { priceByMat[pr.material] = pr.price; });
+    const byMat = {};
+    it.prices.forEach(pr => { byMat[pr.material] = pr; });
     const row = [it.name, it.codeDisplay];
-    MP_MATERIALS.forEach(m => row.push(priceByMat[m] !== undefined ? priceByMat[m] : ''));
-    MP_MATERIALS.forEach(m => row.push(priceByMat[m] !== undefined ? Math.round(priceByMat[m]*1.1) : ''));
+    MP_MATERIALS.forEach(m => {
+      const pr = byMat[m];
+      row.push(...(pr ? plDetailExcelValues(pr.product, detailKeys) : detailKeys.map(()=>'')));
+      row.push(pr ? pr.price : '');
+    });
+    MP_MATERIALS.forEach(m => row.push(byMat[m] ? Math.round(byMat[m].price*1.1) : ''));
     return row;
   });
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-  ws['!cols'] = [22,22,...MP_MATERIALS.map(()=>14),...MP_MATERIALS.map(()=>14)].map(w=>({wch:w}));
+  ws['!cols'] = [22,22,...MP_MATERIALS.flatMap(()=>[...detailKeys.map(()=>10),14]),...MP_MATERIALS.map(()=>14)].map(w=>({wch:w}));
   XLSX.utils.book_append_sheet(wb, ws, '金種まとめ');
   XLSX.writeFile(wb, `BIJOU_金種まとめ価格表_${today}.xlsx`);
   toast('金種まとめのExcelを出力しました', 'success');
