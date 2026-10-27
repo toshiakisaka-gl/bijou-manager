@@ -458,6 +458,8 @@ canvas { max-width: 100%; }
         <button class="btn btn-outline btn-sm" onclick="openDeliveryImport()" style="color:#2E7BB5;border-color:#2E7BB5;" title="納品書アプリの最新の納品書から、グラム数・制作費・石代・パーツ代を取り込みます">📦 納品書から取込</button>
         <button class="btn btn-outline btn-sm" onclick="openBijouPriceImport()" style="color:#2D5E3A;border-color:#4A7C59;" title="在庫管理アプリ（BIJOU Manager）の価格を、確定価格に取り込みます">🏷 在庫管理の価格を取込</button>
         <button class="btn btn-outline btn-sm" onclick="openReviewList()" style="color:#C25C5C;border-color:#C25C5C;font-weight:600;" title="原価率が上限を超えている商品を一覧にします">⚠ 見直しリスト</button>
+        <button class="btn btn-outline btn-sm" onclick="openSendToBijou()" style="color:#fff;background:#2E7BB5;border-color:#2E7BB5;font-weight:600;" title="確定価格と原価を在庫管理アプリ（BIJOU Manager）に反映します">📤 BIJOU に反映</button>
+        <button class="btn btn-outline btn-sm" onclick="openBackupHistory()" style="color:#2E7BB5;border-color:#2E7BB5;" title="在庫管理に反映した履歴を見て、元に戻せます">🕘 反映の履歴</button>
         <input type="file" id="import-products-file" accept=".xlsx" style="display:none" onchange="importProducts(this)">
       </div>
     </div>
@@ -4934,7 +4936,7 @@ async function openBijouPriceImport() {
 
     const matched = new Set();
     const candidates = [];
-    let sameCount = 0;
+    let sameCount = 0, remembered = 0;
     products.forEach((p, i) => {
       const code = diNormCode(p.codeFull);
       const b = bijou[code];
@@ -4942,7 +4944,11 @@ async function openBijouPriceImport() {
       matched.add(code);
       const prices = [...b.prices].sort((x, y) => x - y);
       const cur = Math.round(parseFloat(p.confirmedPrice) || 0);
-      if (prices.length === 1 && prices[0] === cur) { sameCount++; return; }
+      if (prices.length === 1 && prices[0] === cur) {
+        sameCount++;
+        if (p.bijouPrice !== cur) { p.bijouPrice = cur; remembered++; }
+        return;
+      }
       const next = prices[prices.length - 1];
       const cost = diCostOf(p).cost;
       candidates.push({
@@ -4954,6 +4960,7 @@ async function openBijouPriceImport() {
     });
     candidates.sort((a, b) => Math.abs(b.next - b.cur) - Math.abs(a.next - a.cur));
     _bpCandidates = candidates;
+    if (remembered > 0) calcAll();   // 在庫管理と同じだった価格を覚えて保存
     const notInPriceApp = Object.keys(bijou).filter(c => !matched.has(c));
     renderBijouPriceImport(sameCount, notInPriceApp);
   } catch(e) {
@@ -5009,7 +5016,7 @@ function applyBijouPriceImport() {
   if (picked.length === 0) { toast('チェックした商品がありません'); return; }
   if (!confirm(picked.length + ' 件の確定価格を、在庫管理アプリの価格に変えますか？')) return;
   saveUndo();
-  picked.forEach(c => { products[c.i].confirmedPrice = c.next; });
+  picked.forEach(c => { products[c.i].confirmedPrice = c.next; products[c.i].bijouPrice = c.next; });
   calcAll();
   diCloseModal();
   toast(picked.length + ' 件の確定価格を在庫管理アプリの価格にそろえました（↩ で元に戻せます）');
@@ -5101,7 +5108,8 @@ function renderReviewList() {
     html += '</table>'
       + '<div style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end;align-items:center;">'
       + '<span style="font-size:11px;color:#888;">チェックした商品の確定価格を「おすすめ価格」に変えます（前の価格は「前回確定価格」に残ります）</span>'
-      + '<button class="btn btn-gold btn-sm" onclick="applyReviewPrices()">✅ おすすめ価格で確定</button></div>';
+      + '<button class="btn btn-gold btn-sm" onclick="applyReviewPrices()">✅ おすすめ価格で確定</button>'
+      + '<button class="btn btn-sm" style="background:#2E7BB5;color:#fff;border-color:#2E7BB5;" onclick="openSendToBijou()">📤 BIJOU に反映 →</button></div>';
   }
   diShowModal(html);
 }
@@ -5205,7 +5213,8 @@ function renderReviewPanel() {
   el.innerHTML = '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px;">'
     + '<div style="font-size:15px;font-weight:600;color:#A33A3A;">⚠ 見直しが必要な商品：' + rows.length + ' 件</div>'
     + '<span style="font-size:11px;color:var(--muted);">計算に使う単価で見て、原価率が ' + limit + '% を超えている商品です</span>'
-    + '<button class="btn btn-gold btn-sm" style="margin-left:auto;" onclick="openReviewList()">すべて見る・価格を確定 →</button></div>'
+    + '<button class="btn btn-gold btn-sm" style="margin-left:auto;" onclick="openReviewList()">すべて見る・価格を確定 →</button>'
+    + '<button class="btn btn-sm" style="background:#2E7BB5;color:#fff;border-color:#2E7BB5;" onclick="openSendToBijou()">📤 BIJOU に反映</button></div>'
     + '<table style="width:100%;border-collapse:collapse;font-size:11px;">'
     + '<tr style="text-align:left;color:var(--muted);"><th style="padding:4px 6px;">型番・商品名</th><th>納品書</th><th style="text-align:right;">確定価格</th><th style="text-align:right;">原価</th><th style="text-align:right;">原価率</th><th style="text-align:right;">おすすめ価格</th></tr>'
     + rows.slice(0, 5).map(r => '<tr style="border-top:1px solid #eee;">'
@@ -5221,6 +5230,293 @@ function renderReviewPanel() {
 
 window.applyBasis = applyBasis;
 window.renderReviewPanel = renderReviewPanel;
+
+// ===== 確定価格と原価を BIJOU Manager（在庫管理）に反映する =====
+// ・価格：価格アプリの確定価格（税抜）
+// ・原価：今の相場（余裕なし）で計算した原価。余裕の10%は価格を決めるための安全分なので、BIJOU の粗利は実際に近い原価で見る
+// ・書き換える前に、BIJOU の全商品の価格と原価を日付付きでバックアップ（bijou_price_backups）し、いつでも戻せる
+let _sbCandidates = [];
+let _sbFields = { price: true, cost: true };
+let _sbNotInBijou = 0;
+
+// 今の相場（余裕なし）で計算した原価
+function costAtMarket(p) {
+  const market = parseFloat(document.getElementById('market-' + p.material)?.value) || 0;
+  // グラム数が空（他の金種から換算した推定）や、今の相場が入っていない金種は、原価を送らない
+  if (!(parseFloat(p.gram) > 0) || !(market > 0)) return 0;
+  const loss = 1 + (parseFloat(document.getElementById('loss-rate')?.value) || 0) / 100;
+  const gram = p._calcGram || parseFloat(p.gram) || 0;
+  return Math.round(gram * market * loss + (parseFloat(p.make) || 0) + (parseFloat(p.gem) || 0) + (parseFloat(p.parts) || 0) + (parseFloat(p.misc) || 0));
+}
+
+async function readBijouProducts() {
+  const snap = await fbDb.collection('products').get();
+  const list = [];
+  snap.forEach(doc => {
+    const d = doc.data();
+    list.push({ id: doc.id, code: d.code || '', name: d.name || '', price: Math.round(parseFloat(d.price) || 0), cost: Math.round(parseFloat(d.cost) || 0) });
+  });
+  return list;
+}
+
+async function openSendToBijou() {
+  if (!_cloudReady) { toast('クラウドに接続してから使ってください'); return; }
+  diShowModal('<p style="font-size:13px;">在庫管理アプリの価格と原価を読み込み中…</p>');
+  try {
+    const list = await readBijouProducts();
+    const bijou = {};
+    list.forEach(d => { const c = diNormCode(d.code); if (c) (bijou[c] = bijou[c] || []).push(d); });
+
+    const candidates = [];
+    let notInBijou = 0;
+    const seen = new Set();
+    // 価格アプリの中で同じ型番が2つ以上あり、金額が違うものは「要確認」にする
+    const dupInApp = {};
+    products.forEach(p => { const c = diNormCode(p.codeFull); if (c) (dupInApp[c] = dupInApp[c] || []).push(p); });
+    calcAll(true);
+    products.forEach((p, i) => {
+      const code = diNormCode(p.codeFull);
+      if (!code || seen.has(code)) return;
+      seen.add(code);
+      const docs = bijou[code];
+      if (!docs) { notInBijou++; return; }
+      const conf = Math.round(parseFloat(p.confirmedPrice) || 0);
+      const cost = costAtMarket(p);
+      const prices = [...new Set(docs.map(d => d.price))];
+      const costs = [...new Set(docs.map(d => d.cost))];
+      const priceDiff = conf > 0 && !(prices.length === 1 && prices[0] === conf);
+      const costDiff = cost > 0 && !(costs.length === 1 && costs[0] === cost);
+      if (!priceDiff && !costDiff) return;
+      const twins = dupInApp[code] || [];
+      const appConflict = twins.length > 1 && (new Set(twins.map(t => Math.round(parseFloat(t.confirmedPrice) || 0))).size > 1
+        || new Set(twins.map(t => costAtMarket(t))).size > 1);
+      // 価格の状態：changed＝価格アプリで変えた／bijouChanged＝前に合わせたあと在庫管理側で変わった／never＝まだ一度も合わせていない
+      let priceState = 'changed';
+      if (priceDiff) {
+        if (p.bijouPrice === undefined || p.bijouPrice === null) priceState = 'never';
+        else if (prices.length === 1 && prices[0] !== p.bijouPrice) priceState = 'bijouChanged';
+      }
+      candidates.push({
+        i, code: p.codeFull, name: p.name || docs[0].name, docs,
+        conf, prices, priceDiff, cost, costs, costDiff, priceState,
+        conflict: prices.length > 1 || costs.length > 1 || appConflict,
+        appConflict,
+      });
+    });
+    _sbCandidates = candidates;
+    renderSendToBijou(notInBijou);
+  } catch(e) {
+    diCloseModal();
+    handleCloudError(e, '在庫管理の読み込みに失敗');
+  }
+}
+
+function sbSetField(f, on) { _sbFields[f] = on; renderSendToBijou(); }
+
+function sbNotes(c) {
+  const n = [];
+  if (c.appConflict) n.push('⚠ 価格アプリに同じ型番が2つ以上あり、金額が違います');
+  if (c.prices.length > 1 || c.costs.length > 1) n.push('⚠ 在庫管理に同じ型番が ' + c.docs.length + ' 件あり、金額が違います');
+  if (_sbFields.price && c.priceDiff && c.priceState === 'never') n.push('⚠ この商品は、まだ在庫管理の価格と一度も合わせていません（価格アプリの確定価格が古い可能性）');
+  if (_sbFields.price && c.priceDiff && c.priceState === 'bijouChanged') n.push('⚠ 前に合わせたあと、在庫管理側で価格が変わっています');
+  if (!n.length && c.docs.length > 1) n.push('（在庫管理の ' + c.docs.length + ' 件をまとめて変更）');
+  return n;
+}
+
+function renderSendToBijou(notInBijou) {
+  if (notInBijou !== undefined) _sbNotInBijou = notInBijou;
+  const yen = n => Math.round(n).toLocaleString();
+  const rows = _sbCandidates;
+  const cell = (k, field, diff, nowList, next, checked) => !diff
+    ? '<span style="color:#bbb;">' + nowList.map(yen).join(' / ') + '（同じ）</span>'
+    : '<label style="cursor:pointer;white-space:nowrap;"><input type="checkbox" class="sb-' + field + '" data-k="' + k + '"' + (checked ? ' checked' : '') + '> '
+      + '<span style="color:#999;">' + nowList.map(yen).join(' / ') + '</span> → <b>' + yen(next) + '</b></label>';
+
+  let html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">'
+    + '<div style="font-size:16px;font-weight:600;">📤 価格と原価を在庫管理に反映する</div>'
+    + '<button class="btn btn-outline btn-sm" onclick="diCloseModal()">閉じる</button></div>'
+    + '<p style="font-size:12px;color:#666;margin-bottom:10px;">価格アプリの<b>確定価格</b>と<b>原価（今の相場・余裕なしで計算）</b>を、在庫管理アプリ（BIJOU Manager）に送ります。在庫・画像などはそのままです。<br>'
+    + '反映する直前に、在庫管理の<b>全商品の価格と原価を日付付きでバックアップ</b>します（「🕘 反映の履歴」から元に戻せます）。<br>'
+    + '<span style="color:#B8860B;">⚠ が付いている項目は、最初はチェックを外しています。内容を確かめてから選んでください。</span></p>'
+    + '<p style="font-size:12px;margin-bottom:8px;">違いがある商品：<b>' + rows.length + '</b> 件' + (_sbNotInBijou ? '　<span style="color:#888;">（在庫管理にない型番：' + _sbNotInBijou + ' 件）</span>' : '') + '</p>';
+
+  if (rows.length === 0) {
+    html += '<p style="font-size:13px;">在庫管理と違う商品はありません ✅</p>';
+  } else {
+    html += '<div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap;">'
+      + '<button class="btn btn-outline btn-sm" onclick="sbCheckAll(\'price\',true)">価格をすべて選ぶ</button>'
+      + '<button class="btn btn-outline btn-sm" onclick="sbCheckAll(\'price\',false)">価格をすべて外す</button>'
+      + '<button class="btn btn-outline btn-sm" onclick="sbCheckAll(\'cost\',true)">原価をすべて選ぶ</button>'
+      + '<button class="btn btn-outline btn-sm" onclick="sbCheckAll(\'cost\',false)">原価をすべて外す</button></div>'
+      + '<table style="width:100%;border-collapse:collapse;font-size:11px;">'
+      + '<tr style="background:#f5f2ea;text-align:left;"><th style="padding:6px;">型番・商品名</th><th>価格（税抜）</th><th>原価</th><th></th></tr>';
+    rows.forEach((c, k) => {
+      const priceOk = !c.conflict && c.priceState === 'changed';
+      const costOk = !c.conflict;
+      html += '<tr style="border-top:1px solid #eee;">'
+        + '<td style="padding:6px;"><b>' + c.code + '</b><br><span style="color:#888;">' + c.name + '</span></td>'
+        + '<td>' + cell(k, 'price', c.priceDiff, c.prices, c.conf, priceOk) + '</td>'
+        + '<td>' + cell(k, 'cost', c.costDiff, c.costs, c.cost, costOk) + '</td>'
+        + '<td style="color:#B8860B;font-size:10px;line-height:1.5;">' + sbNotes(c).join('<br>') + '</td></tr>';
+    });
+    html += '</table>'
+      + '<div style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end;">'
+      + '<button class="btn btn-outline btn-sm" onclick="openBackupHistory()">🕘 反映の履歴</button>'
+      + '<button class="btn btn-outline btn-sm" onclick="diCloseModal()">キャンセル</button>'
+      + '<button class="btn btn-gold btn-sm" onclick="applySendToBijou()">📤 チェックした項目を在庫管理に反映</button></div>';
+  }
+  diShowModal(html);
+}
+
+function sbCheckAll(field, on) { document.querySelectorAll('.sb-' + field).forEach(el => { el.checked = on; }); }
+
+// 在庫管理の全商品の価格と原価を、日付付きで保存する
+async function saveBijouBackup(label, changes) {
+  const list = await readBijouProducts();
+  const now = new Date();
+  const id = now.toISOString().replace(/[:.]/g, '-');
+  await fbDb.collection('bijou_price_backups').doc(id).set({
+    createdAt: now.toISOString(),
+    label: label,
+    changedCount: changes.length,
+    changes: changes,                                   // [{id, code, name, field:'price'|'cost', before, after}]
+    snapshot: list.map(d => ({ id: d.id, code: d.code, price: d.price, cost: d.cost })),
+  });
+  return id;
+}
+
+async function applySendToBijou() {
+  const pickPrice = [...document.querySelectorAll('.sb-price')].filter(el => el.checked).map(el => _sbCandidates[+el.dataset.k]);
+  const pickCost = [...document.querySelectorAll('.sb-cost')].filter(el => el.checked).map(el => _sbCandidates[+el.dataset.k]);
+  const changes = [];
+  pickPrice.forEach(c => c.docs.forEach(d => { if (d.price !== c.conf) changes.push({ id: d.id, code: d.code, name: d.name, field: 'price', before: d.price, after: c.conf }); }));
+  pickCost.forEach(c => c.docs.forEach(d => { if (d.cost !== c.cost) changes.push({ id: d.id, code: d.code, name: d.name, field: 'cost', before: d.cost, after: c.cost }); }));
+  if (changes.length === 0) { toast('チェックした項目がありません'); return; }
+  const codes = new Set(pickPrice.concat(pickCost).map(c => c.code)).size;
+  if (!confirm(codes + ' 件の型番を在庫管理に反映します（価格 ' + pickPrice.length + ' 件・原価 ' + pickCost.length + ' 件、変更 ' + changes.length + ' か所）。\n反映の前に、今の価格と原価をバックアップします。\nよろしいですか？')) return;
+  try {
+    diShowModal('<p style="font-size:13px;">バックアップを保存しています…</p>');
+    await saveBijouBackup('価格アプリから反映', changes);
+    diShowModal('<p style="font-size:13px;">在庫管理に反映しています…</p>');
+    await writeBijouChanges(changes.map(ch => ({ id: ch.id, field: ch.field, value: ch.after })));
+    pickPrice.forEach(c => { if (products[c.i]) products[c.i].bijouPrice = c.conf; });
+    calcAll();   // 合わせた価格を保存
+    diCloseModal();
+    toast(codes + ' 件を在庫管理アプリに反映しました（バックアップ保存済み）');
+  } catch(e) {
+    diCloseModal();
+    handleCloudError(e, '在庫管理への反映に失敗');
+    if (!(e && e.code === 'permission-denied')) {
+      alert('在庫管理への反映が、途中で止まりました。\n（' + (e && e.message ? e.message : e) + '）\n\n一部の商品だけ変わっている可能性があります。\n反映の前のバックアップは保存されているので、「🕘 反映の履歴」から元に戻せます。');
+    }
+  }
+}
+
+async function writeBijouChanges(items) {
+  const byId = {};
+  items.forEach(it => { (byId[it.id] = byId[it.id] || {})[it.field] = it.value; });
+  const ids = Object.keys(byId);
+  for (let i = 0; i < ids.length; i += 400) {
+    const batch = fbDb.batch();
+    ids.slice(i, i + 400).forEach(id => batch.update(fbDb.collection('products').doc(id), byId[id]));
+    await batch.commit();
+  }
+}
+
+// ===== 反映の履歴・元に戻す =====
+let _bkList = [];
+
+async function openBackupHistory() {
+  if (!_cloudReady) { toast('クラウドに接続してから使ってください'); return; }
+  diShowModal('<p style="font-size:13px;">履歴を読み込み中…</p>');
+  try {
+    const snap = await fbDb.collection('bijou_price_backups').orderBy('createdAt', 'desc').limit(30).get();
+    _bkList = [];
+    snap.forEach(doc => _bkList.push(Object.assign({ _id: doc.id }, doc.data())));
+    renderBackupHistory(null);
+  } catch(e) {
+    diCloseModal();
+    handleCloudError(e, '履歴の読み込みに失敗');
+  }
+}
+
+function renderBackupHistory(openIdx) {
+  const yen = n => Math.round(n).toLocaleString();
+  const fname = { price: '価格', cost: '原価' };
+  let html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">'
+    + '<div style="font-size:16px;font-weight:600;">🕘 反映の履歴・元に戻す</div>'
+    + '<button class="btn btn-outline btn-sm" onclick="diCloseModal()">閉じる</button></div>'
+    + '<p style="font-size:12px;color:#666;margin-bottom:12px;">在庫管理に反映するたびに、その直前の全商品の価格と原価を保存しています（新しい順に30件）。<br>'
+    + '「この前に戻す」を押すと、その日に変えた商品だけを、変える前の金額に戻します。戻す前にも、その時点のバックアップを取ります。</p>';
+  if (_bkList.length === 0) {
+    html += '<p style="font-size:13px;">まだ履歴はありません。</p>';
+  } else {
+    html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+    _bkList.forEach((b, i) => {
+      const t = new Date(b.createdAt).toLocaleString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+      html += '<tr style="border-top:1px solid #eee;"><td style="padding:8px 6px;"><b>' + t + '</b></td>'
+        + '<td>' + (b.label || '') + '</td><td>' + (b.changedCount || 0) + ' か所を変更</td>'
+        + '<td style="text-align:right;white-space:nowrap;">'
+        + '<button class="btn btn-outline btn-sm" onclick="renderBackupHistory(' + (openIdx === i ? 'null' : i) + ')">' + (openIdx === i ? '閉じる' : '中身を見る') + '</button> '
+        + (b.changedCount ? '<button class="btn btn-sm" style="background:#A33A3A;color:#fff;border-color:#A33A3A;" onclick="restoreBackup(' + i + ')">↩ この前に戻す</button>' : '')
+        + '</td></tr>';
+      if (openIdx === i) {
+        html += '<tr><td colspan="4" style="padding:4px 6px 12px;"><table style="width:100%;font-size:11px;border-collapse:collapse;background:#faf8f3;">'
+          + '<tr style="color:#888;text-align:left;"><th style="padding:4px;">型番</th><th>商品名</th><th>項目</th><th style="text-align:right;">変える前</th><th style="text-align:right;">変えた後</th></tr>'
+          + (b.changes || []).map(ch => '<tr style="border-top:1px solid #eee;"><td style="padding:4px;">' + ch.code + '</td><td>' + (ch.name || '') + '</td><td>' + (fname[ch.field] || ch.field) + '</td>'
+            + '<td style="text-align:right;">' + yen(ch.before) + '</td><td style="text-align:right;">' + yen(ch.after) + '</td></tr>').join('')
+          + '</table></td></tr>';
+      }
+    });
+    html += '</table>';
+  }
+  diShowModal(html);
+}
+
+async function restoreBackup(i) {
+  const b = _bkList[i];
+  if (!b || !(b.changes || []).length) return;
+  const t = new Date(b.createdAt).toLocaleString('ja-JP');
+  let current = {};
+  try {
+    (await readBijouProducts()).forEach(d => { current[d.id] = d; });
+  } catch(e) { handleCloudError(e, '在庫管理の読み込みに失敗'); return; }
+  const key = ch => ch.id + '|' + ch.field;
+  const mine = new Set(b.changes.map(key));
+  // このあとに反映した履歴で、同じ商品の同じ項目を変えているもの
+  let later = 0;
+  _bkList.slice(0, i).forEach(nb => (nb.changes || []).forEach(ch => { if (mine.has(key(ch))) later++; }));
+  // 今の在庫管理の金額が、そのとき反映した金額と違うもの（あとで手で直した可能性）
+  const missing = b.changes.filter(ch => !current[ch.id]).length;
+  const differ = b.changes.filter(ch => current[ch.id] && current[ch.id][ch.field] !== ch.after).length;
+  let msg = t + ' に変えた ' + b.changes.length + ' か所を、変える前の金額に戻します。\n（今の金額も、念のためバックアップします）';
+  if (later) msg += '\n\n⚠ このあとの反映で、同じ商品を ' + later + ' か所変えています。戻すと、その変更も上書きされます。';
+  if (differ) msg += '\n\n⚠ ' + differ + ' か所は、今の在庫管理の金額がそのとき反映した金額と違います（あとで手で直した可能性があります）。';
+  if (missing) msg += '\n\n※ ' + missing + ' か所は、在庫管理から商品が削除されているので戻せません。';
+  if (!confirm(msg + '\n\nよろしいですか？')) return;
+  try {
+    diShowModal('<p style="font-size:13px;">元に戻しています…</p>');
+    const restore = b.changes.filter(ch => current[ch.id]).map(ch => ({ id: ch.id, code: ch.code, name: ch.name, field: ch.field, before: current[ch.id][ch.field], after: ch.before }));
+    await saveBijouBackup('元に戻した（' + t + ' の反映を取り消し）', restore);
+    await writeBijouChanges(restore.map(ch => ({ id: ch.id, field: ch.field, value: ch.after })));
+    toast(restore.length + ' か所を元に戻しました（価格アプリの確定価格はそのままです）');
+    await openBackupHistory();
+  } catch(e) {
+    diCloseModal();
+    handleCloudError(e, '元に戻せませんでした');
+    if (!(e && e.code === 'permission-denied')) {
+      alert('元に戻す途中で止まりました。\n（' + (e && e.message ? e.message : e) + '）\n\n戻す前の金額もバックアップしてあるので、「🕘 反映の履歴」で確認できます。');
+    }
+  }
+}
+
+window.openSendToBijou = openSendToBijou;
+window.applySendToBijou = applySendToBijou;
+window.sbSetField = sbSetField;
+window.sbCheckAll = sbCheckAll;
+window.openBackupHistory = openBackupHistory;
+window.renderBackupHistory = renderBackupHistory;
+window.restoreBackup = restoreBackup;
 
 // ===== INIT =====
 let _hasLocal = false;
