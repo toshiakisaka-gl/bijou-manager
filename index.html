@@ -975,6 +975,12 @@ tr:hover td{background:var(--cream);}
     </div>
   </div>
 
+  <div class="card" id="stone-memo-import-card" style="margin-bottom:16px;">
+    <p style="font-size:12px;font-weight:500;margin-bottom:6px;">💎 メモから石の名前を取り込む</p>
+    <p style="font-size:11px;color:var(--muted);margin-bottom:10px;">商品のメモに書いてある石の名前を、「石の名前」の欄に写します（ホワイトダイヤモンド→WD、ブラウンダイヤモンド→BD）。先に一覧で確認してから反映します。メモはそのまま残ります。</p>
+    <button class="btn btn-outline btn-sm" onclick="openStoneMemoImport()">一覧を作って確認する</button>
+  </div>
+
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;" id="settings-layout">
     <div>
       <div class="card">
@@ -1870,7 +1876,7 @@ tr:hover td{background:var(--cream);}
 <script type="module">
 // ===== バージョン情報 =====
 // 新しく書き出す(出力する)たびに、日付を YYYY.MM.DD 形式で更新してください
-const APP_VERSION = 'v2026.10.28-70';
+const APP_VERSION = 'v2026.10.28-71';
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc, onSnapshot, writeBatch, getDoc }
@@ -2780,6 +2786,113 @@ async function saveStoneName(code, name) {
 function stoneEsc(s) {
   return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
+
+// ===== メモから石の名前を取り込む（メモはそのまま残す） =====
+// 例：「EmeraldW DiamondRuby」→「Emerald / WD / Ruby」、「Browndiamond」→「BD」
+function stoneFromMemo(memo) {
+  let t = String(memo || '').replace(/[\r\n]+/g, '|').replace(/[ \t　]+/g, ' ').trim();
+  if (!t) return '';
+  t = t.replace(/brown\s*diamond/gi, '|BD|').replace(/ブラウン\s*ダイ[ヤア](モンド)?/g, '|BD|')
+       .replace(/w(hite)?\s*diamond/gi, '|WD|').replace(/ホワイト\s*ダイ[ヤア](モンド)?/g, '|WD|')
+       .replace(/([a-z])(?=[A-Z])/g, '$1|')
+       .replace(/[、,，／\/・]/g, '|');
+  return [...new Set(t.split('|').map(x => x.trim()).filter(Boolean))].join(' / ');
+}
+
+function openStoneMemoImport() {
+  if (STORE_MODE) return;
+  if (!dbReady) { toast('クラウドに接続できていないので使えません', 'error'); return; }
+  const groups = {};
+  let noCode = 0;
+  products.forEach(p => {
+    const memo = String(p.memo || '').trim();
+    if (!memo) return;
+    const key = stoneKey(p.code);
+    if (!key) { noCode++; return; }
+    if (!groups[key]) groups[key] = { key, codes: [], names: {} };
+    groups[key].codes.push(p.code);
+    const name = stoneFromMemo(memo);
+    groups[key].names[name] = (groups[key].names[name] || 0) + 1;
+  });
+  const rows = Object.values(groups).sort((a, b) => a.key.localeCompare(b.key, 'ja')).map(g => {
+    const names = Object.keys(g.names).sort((a, b) => g.names[b] - g.names[a]);
+    const current = stoneNames[g.key] || '';
+    const oddCode = !/^\d{3}-[A-Z]/.test(g.key);
+    let note = '';
+    if (names.length > 1) note = '金種によってメモが違います';
+    else if (current && current !== names[0]) note = '石の名前がすでに入っています';
+    else if (oddCode) note = '型番の形がふつうと違います';
+    const done = current && current === names[0];
+    return { ...g, proposed: names[0], current, note, done, check: !note && !done };
+  });
+  window._stoneMemoRows = rows;
+
+  const existing = document.getElementById('stone-memo-dialog');
+  if (existing) existing.remove();
+  const dialog = document.createElement('div');
+  dialog.id = 'stone-memo-dialog';
+  dialog.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;';
+  dialog.innerHTML = `
+    <div style="background:white;border-radius:14px;padding:24px;max-width:760px;width:100%;box-shadow:0 12px 48px rgba(0,0,0,0.3);max-height:90vh;overflow-y:auto;">
+      <div style="font-family:'Cormorant Garamond',serif;font-size:20px;margin-bottom:6px;">💎 メモから石の名前を取り込む</div>
+      <p style="font-size:11px;color:#9A9080;margin-bottom:12px;">メモがある型番：${rows.length}件${noCode ? `（型番が空の商品 ${noCode}件は対象外）` : ''}。チェックした型番だけ反映します。石の名前はここで直せます。<strong>「要確認」の行は、最初はチェックを外しています。</strong></p>
+      <div style="display:flex;gap:6px;margin-bottom:8px;">
+        <button type="button" class="btn btn-outline btn-sm" onclick="document.querySelectorAll('.smi-check').forEach(c=>c.checked=true)">全選択</button>
+        <button type="button" class="btn btn-outline btn-sm" onclick="document.querySelectorAll('.smi-check').forEach(c=>c.checked=false)">全解除</button>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:11px;">
+        <thead><tr style="background:var(--cream);">
+          <th style="padding:6px;"></th><th style="padding:6px;text-align:left;">型番</th><th style="padding:6px;text-align:left;">メモ（元）</th>
+          <th style="padding:6px;text-align:left;">石の名前（反映する内容）</th><th style="padding:6px;text-align:left;">いまの石の名前・要確認</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map((r, i) => `
+          <tr style="border-bottom:1px solid #f0ebe0;${r.note ? 'background:#FFF6E8;' : ''}">
+            <td style="padding:6px;"><input type="checkbox" class="smi-check" data-i="${i}" ${r.check ? 'checked' : ''}></td>
+            <td style="padding:6px;white-space:nowrap;" title="${stoneEsc(r.codes.join(' / '))}">${stoneEsc(r.key)}<div style="font-size:9px;color:#9A9080;">${r.codes.length}商品</div></td>
+            <td style="padding:6px;color:#6B6152;">${Object.keys(r.names).map(n => stoneEsc(n)).join('<br>')}</td>
+            <td style="padding:6px;"><input type="text" class="form-control smi-name" data-i="${i}" value="${stoneEsc(r.proposed)}" style="font-size:11px;padding:4px 6px;"></td>
+            <td style="padding:6px;">${r.done ? '<span style="color:#5C8C6A;">✓ 入っています</span>' : stoneEsc(r.current)}${r.note ? `<div style="color:#C2410C;">⚠ 要確認：${r.note}</div>` : ''}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+      <div style="display:flex;gap:8px;margin-top:14px;">
+        <button onclick="applyStoneMemoImport()" style="flex:1;padding:10px;background:#C9A96E;color:#2C2C2C;border:none;border-radius:8px;font-size:13px;cursor:pointer;font-weight:500;">チェックした型番に反映する</button>
+        <button onclick="document.getElementById('stone-memo-dialog').remove()" style="padding:10px 16px;background:white;color:#9A9080;border:1px solid #E8D5B0;border-radius:8px;font-size:13px;cursor:pointer;">閉じる</button>
+      </div>
+    </div>`;
+  document.body.appendChild(dialog);
+}
+window.openStoneMemoImport = openStoneMemoImport;
+
+async function applyStoneMemoImport() {
+  const rows = window._stoneMemoRows || [];
+  const writes = [];
+  document.querySelectorAll('.smi-check:checked').forEach(cb => {
+    const r = rows[cb.dataset.i];
+    const name = (document.querySelector(`.smi-name[data-i="${cb.dataset.i}"]`)?.value || '').trim();
+    if (r && name && name !== (stoneNames[r.key] || '')) writes.push([r.key, name]);
+  });
+  if (!writes.length) { toast('反映する型番がありません（チェックがないか、すでに同じ名前です）', 'error'); return; }
+  if (!confirm(`${writes.length}件の型番に石の名前を入れます。よろしいですか？\n（メモはそのまま残ります）`)) return;
+  try {
+    for (let i = 0; i < writes.length; i += 400) {
+      const batch = writeBatch(db);
+      const now = new Date().toISOString();
+      writes.slice(i, i + 400).forEach(([key, name]) => {
+        batch.set(doc(db, 'stone_names', key), { name, code: key, updatedAt: now, from: 'bijou-memo' });
+      });
+      await batch.commit();
+    }
+    writes.forEach(([key, name]) => { stoneNames[key] = name; });
+    document.getElementById('stone-memo-dialog')?.remove();
+    toast(`${writes.length}件の型番に石の名前を入れました 💎`, 'success');
+  } catch(e) {
+    console.warn(e);
+    alert('途中で止まりました。もう一度「一覧を作って確認する」から開くと、入った分は「✓ 入っています」と出ます。\n' + (e.message || e));
+  }
+}
+window.applyStoneMemoImport = applyStoneMemoImport;
 
 // ===== 価格表の社内用項目（グラム・原価・工賃・パーツ・石） =====
 // グラム・工賃・パーツ・石は価格アプリ（price_items）から型番で探して使う。原価は BIJOU の原価。商品データは変更しない。
