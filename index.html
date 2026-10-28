@@ -1365,6 +1365,10 @@ tr:hover td{background:var(--cream);}
         <label>メモ</label>
         <input type="text" class="form-control" id="ep-memo" placeholder="メモ">
       </div>
+      <div class="form-group" id="ep-stone-wrap" style="margin-bottom:0;margin-top:12px;">
+        <label>石の名前（同じ型番の全金種で共通・価格アプリと同期）</label>
+        <input type="text" class="form-control" id="ep-stone" placeholder="例: WD、BD、Green Sapphire（石がなければ空のまま）">
+      </div>
     </div>
     <div class="flex-gap" style="margin-top:20px;">
       <button class="btn btn-gold" onclick="saveEditProduct()">💾 保存</button>
@@ -1866,7 +1870,7 @@ tr:hover td{background:var(--cream);}
 <script type="module">
 // ===== バージョン情報 =====
 // 新しく書き出す(出力する)たびに、日付を YYYY.MM.DD 形式で更新してください
-const APP_VERSION = 'v2026.10.27-69';
+const APP_VERSION = 'v2026.10.28-70';
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc, onSnapshot, writeBatch, getDoc }
@@ -2040,6 +2044,13 @@ async function initFirebase() {
       }
       if (products.length>0) { const ig=document.getElementById('import-guide'); if(ig)ig.style.display='none'; }
     });
+
+    // 石の名前（価格アプリと共通）。どちらで直してもすぐ反映されるように変更を監視する
+    onSnapshot(collection(db,'stone_names'), snap => {
+      const m = {};
+      snap.forEach(d => { const v = d.data(); if (v.name) m[d.id] = v.name; });
+      stoneNames = m;
+    }, e => console.warn('石の名前を読み込めませんでした', e));
 
     dbReady = true;
     showStatus('クラウド接続済み ☁️','success');
@@ -2393,6 +2404,8 @@ function openEditProduct(id) {
   document.getElementById('ep-material').value = p.material || '';
   document.getElementById('ep-category').value = p.category || '';
   document.getElementById('ep-memo').value = p.memo || '';
+  const stoneEl = document.getElementById('ep-stone');
+  if (stoneEl) { stoneEl.value = stoneNameOf(p.code); stoneEl.dataset.orig = stoneEl.value; }
   updateEpPreview();
   document.getElementById('modal-edit-product').classList.add('open');
 }
@@ -2422,6 +2435,11 @@ async function saveEditProduct() {
   p.category = document.getElementById('ep-category').value.trim();
   p.memo = document.getElementById('ep-memo').value.trim();
   await saveProductDB(p);
+  const stoneEl = document.getElementById('ep-stone');
+  if (stoneEl && !STORE_MODE && stoneEl.value.trim() !== stoneEl.dataset.orig) {
+    try { await saveStoneName(p.code, stoneEl.value); }
+    catch(e) { console.warn(e); toast('石の名前を保存できませんでした', 'error'); }
+  }
   closeModal('modal-edit-product');
   // 絞り込み状態を維持したまま再描画
   filterProducts(document.getElementById('product-search')?.value || '');
@@ -2735,6 +2753,33 @@ function exportBackup() {
   saveSettings();
 }
 window.exportBackup = exportBackup;
+
+// ===== 石の名前（型番ごと・全金種で共通） =====
+// 価格アプリと同じ stone_names/{型番} に1つだけ保存するので、どちらで直しても同じになる
+let stoneNames = {};   // 型番（金種を除いたもの）→ 石の名前
+
+function stoneKey(code) {
+  return plNormCode(code).replace(/-(?:18|10|PT|SV-C|SV)$/, '').replace(/\//g, '_');
+}
+
+function stoneNameOf(code) {
+  return stoneNames[stoneKey(code)] || '';
+}
+
+async function saveStoneName(code, name) {
+  const key = stoneKey(code);
+  if (!key) return;
+  name = String(name || '').trim();
+  if ((stoneNames[key] || '') === name) return;
+  const ref = doc(db, 'stone_names', key);
+  if (name) await setDoc(ref, { name, code: key, updatedAt: new Date().toISOString(), from: 'bijou' });
+  else await deleteDoc(ref);
+  if (name) stoneNames[key] = name; else delete stoneNames[key];
+}
+
+function stoneEsc(s) {
+  return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
 
 // ===== 価格表の社内用項目（グラム・原価・工賃・パーツ・石） =====
 // グラム・工賃・パーツ・石は価格アプリ（price_items）から型番で探して使う。原価は BIJOU の原価。商品データは変更しない。
@@ -3775,6 +3820,7 @@ function mpExecute() {
       image: imageMember?.image || null,
       baseCode: g.baseCode,
       codeDisplay,
+      stone: stoneNameOf(g.baseCode),
       prices
     };
   }).filter(it => it.prices.length > 0);
@@ -3887,7 +3933,8 @@ function mpExportTagPDF(items, cols, detailKeys=[], landscape=false, horizontal=
         <div style="width:42%;flex-shrink:0;background:#f8f5f0;display:flex;align-items:center;"><div style="width:100%;aspect-ratio:1/1;overflow:hidden;">${img}</div></div>
         <div style="flex:1;min-width:0;padding:8px 10px;box-sizing:border-box;display:flex;flex-direction:column;justify-content:center;">
           <div style="font-family:'Cormorant Garamond',serif;font-size:${tier===1?17:tier===2?14:12}px;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${it.name}</div>
-          <div style="${gothic}font-size:${tier===1?10:9}px;color:#9A9080;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:4px;">${it.codeDisplay}</div>
+          <div style="${gothic}font-size:${tier===1?12:11}px;color:#2C2C2C;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;${it.stone?'':'margin-bottom:4px;'}">${it.codeDisplay}</div>
+          ${it.stone ? `<div style="${gothic}font-size:${tier===1?11:10}px;color:#6B6152;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:4px;">${stoneEsc(it.stone)}</div>` : ''}
           <div style="display:flex;flex-direction:column;gap:${detailKeys.length?0:4}px;">${priceLines}</div>
         </div>
       </div>
@@ -3898,7 +3945,8 @@ function mpExportTagPDF(items, cols, detailKeys=[], landscape=false, horizontal=
         <div style="width:100%;aspect-ratio:1/1;background:#f8f5f0;overflow:hidden;">${img}</div>
         <div class="fit-name" style="height:${nameBlockH}px;padding:8px 10px 0;text-align:center;box-sizing:border-box;overflow:hidden;">
           <div style="font-family:'Cormorant Garamond',serif;font-size:${tier===1?17:tier===2?14:12}px;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${it.name}</div>
-          <div style="${gothic}font-size:${tier===1?10:9}px;color:#9A9080;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${it.codeDisplay}</div>
+          <div style="${gothic}font-size:${tier===1?12:11}px;color:#2C2C2C;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${it.codeDisplay}</div>
+          ${it.stone ? `<div style="${gothic}font-size:${tier===1?11:10}px;color:#6B6152;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${stoneEsc(it.stone)}</div>` : ''}
         </div>
         <div class="fit-price" style="height:${priceBlockH}px;padding:0 10px 8px;box-sizing:border-box;display:flex;flex-direction:column;justify-content:${detailKeys.length?'flex-start':'center'};gap:${detailKeys.length?0:4}px;">${priceLines}</div>
       </div>
@@ -3931,7 +3979,8 @@ function mpExportListPDF(items, detailKeys=[]) {
       <td style="padding:8px 10px;border-bottom:1px solid #f0ebe0;width:60px;">${img}</td>
       <td style="padding:8px 10px;border-bottom:1px solid #f0ebe0;">
         <div style="font-family:'Cormorant Garamond',serif;font-size:14px;">${it.name}</div>
-        <div style="${gothic}font-size:10px;color:#9A9080;margin-top:2px;">${it.codeDisplay}</div>
+        <div style="${gothic}font-size:12px;color:#2C2C2C;margin-top:2px;">${it.codeDisplay}</div>
+        ${it.stone ? `<div style="${gothic}font-size:11px;color:#6B6152;margin-top:1px;">${stoneEsc(it.stone)}</div>` : ''}
       </td>
       <td style="padding:8px 10px;border-bottom:1px solid #f0ebe0;">${priceBadges}</td>
     </tr>`;
@@ -3952,11 +4001,11 @@ function mpExportExcel(items, detailKeys=[]) {
   const XLSX = window.XLSX;
   const today = new Date().toISOString().slice(0,10);
   // 金種ごとに「グラム・原価・工賃・パーツ・石（選んだものだけ）→ 価格」の順で列を並べる
-  const headers = ['商品名', '型番表示', ...MP_MATERIALS.flatMap(m=>[...plDetailExcelHeaders(detailKeys, `${m} `), `${m} 価格（税抜）`]), ...MP_MATERIALS.map(m=>`${m} 税込価格`)];
+  const headers = ['商品名', '型番表示', '石', ...MP_MATERIALS.flatMap(m=>[...plDetailExcelHeaders(detailKeys, `${m} `), `${m} 価格（税抜）`]), ...MP_MATERIALS.map(m=>`${m} 税込価格`)];
   const rows = items.map(it => {
     const byMat = {};
     it.prices.forEach(pr => { byMat[pr.material] = pr; });
-    const row = [it.name, it.codeDisplay];
+    const row = [it.name, it.codeDisplay, it.stone || ''];
     MP_MATERIALS.forEach(m => {
       const pr = byMat[m];
       row.push(...(pr ? plDetailExcelValues(pr.product, detailKeys) : detailKeys.map(()=>'')));
@@ -3967,7 +4016,7 @@ function mpExportExcel(items, detailKeys=[]) {
   });
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-  ws['!cols'] = [22,22,...MP_MATERIALS.flatMap(()=>[...detailKeys.map(()=>10),14]),...MP_MATERIALS.map(()=>14)].map(w=>({wch:w}));
+  ws['!cols'] = [22,22,16,...MP_MATERIALS.flatMap(()=>[...detailKeys.map(()=>10),14]),...MP_MATERIALS.map(()=>14)].map(w=>({wch:w}));
   XLSX.utils.book_append_sheet(wb, ws, '金種まとめ');
   XLSX.writeFile(wb, `BIJOU_金種まとめ価格表_${today}.xlsx`);
   toast('金種まとめのExcelを出力しました', 'success');
@@ -9409,7 +9458,7 @@ function applyStoreMode() {
     #col-cost, #col-profit, #col-profit-list, #col-rate, #col-rate-list,
     label:has(#col-cost), label:has(#col-profit), label:has(#col-profit-list),
     label:has(#col-rate), label:has(#col-rate-list),
-    .stat-card-cost, #sales-current-cost-wrap, #sales-cost-mode-note {
+    .stat-card-cost, #sales-current-cost-wrap, #sales-cost-mode-note, #ep-stone-wrap {
       display:none !important;
     }
 
