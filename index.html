@@ -1876,7 +1876,7 @@ tr:hover td{background:var(--cream);}
 <script type="module">
 // ===== バージョン情報 =====
 // 新しく書き出す(出力する)たびに、日付を YYYY.MM.DD 形式で更新してください
-const APP_VERSION = 'v2026.10.28-71';
+const APP_VERSION = 'v2026.10.29-72';
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc, onSnapshot, writeBatch, getDoc }
@@ -3810,6 +3810,7 @@ function openMergePriceList() {
           <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:8px;">
             <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;"><input type="radio" name="mp-card" value="vertical" checked onchange="mpUpdateColsOptions()"> 縦長（上に写真）</label>
             <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;"><input type="radio" name="mp-card" value="horizontal" onchange="mpUpdateColsOptions()"> 横長（左に写真）</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;"><input type="radio" name="mp-card" value="square" onchange="mpUpdateColsOptions()"> 正方形（1枚に入る数を固定）</label>
           </div>
           <label style="font-size:11px;color:#9A9080;display:block;margin-bottom:6px;">列数</label>
           <div id="mp-cols-options" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
@@ -3869,7 +3870,11 @@ const MP_COLS_CHOICES = {
   'landscape-vertical':   [[3,4,5,6,7], 5],
   'portrait-horizontal':  [[1,2,3], 2],
   'landscape-horizontal': [[2,3,4], 3],
+  'portrait-square':      [[3], 3],
+  'landscape-square':     [[4,5], 5],
 };
+// 正方形のときの段の数（列数 × 段数 ＝ 1枚に入る商品の数）
+const MP_SQUARE_ROWS = { portrait: 4, landscape: 3 };
 function mpUpdateColsOptions() {
   const box = document.getElementById('mp-cols-options');
   if (!box) return;
@@ -3880,7 +3885,7 @@ function mpUpdateColsOptions() {
   const sel = choices.includes(prev) ? prev : def;
   box.innerHTML = choices.map(n => `
     <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;">
-      <input type="radio" name="mp-cols" value="${n}" ${n===sel?'checked':''}> ${n}列
+      <input type="radio" name="mp-cols" value="${n}" ${n===sel?'checked':''}> ${n}列${card==='square' ? `（${MP_SQUARE_ROWS[orient]}段・1枚${n*MP_SQUARE_ROWS[orient]}商品）` : ''}
     </label>`).join('');
 }
 window.mpUpdateColsOptions = mpUpdateColsOptions;
@@ -3905,7 +3910,8 @@ function mpExecute() {
   const format = document.querySelector('input[name="mp-format"]:checked')?.value || 'tag';
   const cols = parseInt(document.querySelector('input[name="mp-cols"]:checked')?.value || '2');
   const landscape = document.querySelector('input[name="mp-orient"]:checked')?.value === 'landscape';
-  const horizontal = document.querySelector('input[name="mp-card"]:checked')?.value === 'horizontal';
+  const cardShape = document.querySelector('input[name="mp-card"]:checked')?.value || 'vertical';
+  const horizontal = cardShape === 'horizontal';
 
   if (!includedMaterials.length) { toast('表示する金種を1つ以上選んでください', 'error'); return; }
   const detailKeys = plReadDetailKeys('mp');
@@ -3942,7 +3948,8 @@ function mpExecute() {
 
   document.getElementById('mp-dialog').remove();
 
-  if (format === 'tag') mpExportTagPDF(items, cols, detailKeys, landscape, horizontal);
+  if (format === 'tag' && cardShape === 'square') mpExportSquarePDF(items, cols, detailKeys, landscape);
+  else if (format === 'tag') mpExportTagPDF(items, cols, detailKeys, landscape, horizontal);
   else if (format === 'list') mpExportListPDF(items, detailKeys);
   else mpExportExcel(items, detailKeys);
 }
@@ -4000,6 +4007,91 @@ function mpPageWrapper(bodyHTML, count, landscape=false) {
     }
     fitBlocks(); window.addEventListener('load',fitBlocks);
     if(document.fonts&&document.fonts.ready) document.fonts.ready.then(fitBlocks);
+    <\/script></body></html>`);
+  w.document.close();
+}
+
+// ===== 正方形のカード（1枚に入る数を固定して、ページごとにきっちり区切る） =====
+// 上半分：左に写真（正方形）、右に商品名・型番・石の名前。下半分：金種ごとの価格を1行ずつ。
+// 入りきらないカードは、印刷画面を開いたときにそのカードだけ文字を小さくする。
+function mpExportSquarePDF(items, cols, detailKeys=[], landscape=false) {
+  mergeLocalImages();
+  const s = settings;
+  const accent = s.accentColor || '#C9A96E';
+  const gothic = "font-family:'Noto Sans JP','Hiragino Kaku Gothic Pro','Meiryo',sans-serif;";
+  const today = new Date().toLocaleDateString('ja-JP', {year:'numeric',month:'long',day:'numeric'});
+  const rows = MP_SQUARE_ROWS[landscape ? 'landscape' : 'portrait'];
+  const perPage = cols * rows;
+  // 印刷範囲（A4・余白12mm）。少しだけ小さくして、白紙のページが出ないようにする
+  const W = landscape ? 273 : 186, H = (landscape ? 186 : 273) - 2;
+  const headH = 11, gap = 3;
+  const S = Math.floor(Math.min((W - gap*(cols-1)) / cols, (H - headH - gap*(rows-1)) / rows) * 10) / 10;
+  const basePx = Math.round(S * 3.78 / 19 * 10) / 10;   // カードの大きさに合わせた文字の大きさ
+  const slash = t => String(t || '').split(' / ').map(x => `<span style="white-space:nowrap;">${stoneEsc(x)}</span>`).join(' / ');
+
+  const card = it => {
+    const img = it.image
+      ? `<img src="${it.image}" style="width:100%;height:100%;object-fit:contain;">`
+      : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:2.4em;background:#F0EBE0;">💍</div>`;
+    const lines = it.prices.map((pr, i) => `
+      <div style="display:flex;align-items:baseline;gap:0.2em 0.6em;flex-wrap:wrap;padding:0.25em 0;${i>0?'border-top:1px solid #EFE4CC;':''}">
+        <span style="font-size:0.8em;padding:0 0.45em;border-radius:3px;font-weight:700;${MP_MAT_STYLE[pr.material]||''}">${pr.material}</span>
+        ${plDetailSegments(pr.product, detailKeys, true).map(t => `<span style="white-space:nowrap;font-size:0.85em;color:#6B6152;">${t}</span>`).join('')}
+        <span style="margin-left:auto;font-size:1.1em;font-weight:700;color:#2C2C2C;white-space:nowrap;">${pr.price.toLocaleString()}円</span>
+      </div>`).join('');
+    return `<div style="width:${S}mm;height:${S}mm;border:1px solid #E8D5B0;border-radius:6px;overflow:hidden;background:white;box-sizing:border-box;padding:2mm;display:flex;flex-direction:column;${gothic}">
+      <div style="display:flex;gap:2mm;height:${(S-4)/2}mm;flex-shrink:0;">
+        <div style="width:${(S-4)/2}mm;height:${(S-4)/2}mm;flex-shrink:0;background:#f8f5f0;border-radius:4px;overflow:hidden;">${img}</div>
+        <div class="sq-fit" data-base="${basePx}" style="flex:1;min-width:0;height:100%;overflow:hidden;font-size:${basePx}px;line-height:1.3;display:flex;flex-direction:column;justify-content:center;">
+          <div style="font-family:'Cormorant Garamond',serif;font-size:1.25em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${stoneEsc(it.name)}</div>
+          <div style="font-size:1em;color:#2C2C2C;margin-top:0.1em;">${slash(it.codeDisplay)}</div>
+          ${it.stone ? `<div style="font-size:0.85em;color:#6B6152;margin-top:0.25em;">${slash(it.stone)}</div>` : ''}
+        </div>
+      </div>
+      <div class="sq-fit" data-base="${basePx}" style="flex:1;min-height:0;overflow:hidden;font-size:${basePx}px;line-height:1.25;border-top:1px solid #E8D5B0;margin-top:1.5mm;display:flex;flex-direction:column;justify-content:center;">${lines}</div>
+    </div>`;
+  };
+
+  const pages = [];
+  for (let i = 0; i < items.length; i += perPage) pages.push(items.slice(i, i + perPage));
+  const sheets = pages.map((list, pi) => `
+    <div class="sheet" style="width:${W}mm;height:${H}mm;">
+      <div style="height:${headH-2}mm;margin-bottom:2mm;display:flex;justify-content:space-between;align-items:flex-end;border-bottom:1.5px solid ${accent};padding-bottom:1mm;box-sizing:border-box;">
+        <div style="display:flex;align-items:flex-end;gap:3mm;">
+          ${s.logoData?`<img src="${s.logoData}" style="height:6mm;max-width:30mm;object-fit:contain;">`:''}
+          <span style="font-family:'Cormorant Garamond',serif;font-size:13px;letter-spacing:2px;color:#2C2C2C;">${s.brandName||''}</span>
+          <span style="font-size:11px;letter-spacing:2px;color:${accent};${gothic}">価格表</span>
+        </div>
+        <div style="${gothic}font-size:9px;color:#9A9080;">※ 価格は税抜　${today}　${pi+1} / ${pages.length}</div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(${cols}, ${S}mm);grid-auto-rows:${S}mm;gap:${gap}mm;justify-content:space-between;">${list.map(card).join('')}</div>
+    </div>`).join('');
+
+  const w = window.open('', '_blank', 'width=1100,height=800');
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400&display=swap" rel="stylesheet">
+    <style>*{box-sizing:border-box;}body{margin:0;background:#E8E4DC;padding:56px 28px 28px;display:flex;flex-direction:column;align-items:center;gap:20px;}
+    .sheet{background:#fff;box-shadow:0 8px 40px rgba(0,0,0,0.18);overflow:hidden;flex-shrink:0;}
+    .bar{position:fixed;top:0;left:0;right:0;background:#2C2C2C;color:#E8D5B0;padding:9px 20px;font-family:sans-serif;font-size:12px;display:flex;justify-content:space-between;align-items:center;z-index:99;}
+    .bar button{background:#C9A96E;color:#2C2C2C;border:none;padding:5px 16px;border-radius:4px;cursor:pointer;font-size:11px;}
+    @page{size:A4 ${landscape?'landscape':'portrait'};margin:12mm;}
+    @media print{.bar{display:none;}body{padding:0;background:white;display:block;}.sheet{box-shadow:none;page-break-after:always;break-after:page;}.sheet:last-child{page-break-after:auto;break-after:auto;}}</style>
+    <title>価格表（金種まとめ）</title></head><body>
+    <div class="bar">
+      <span>🔗 金種まとめ価格表（正方形・${items.length}点・1枚${perPage}商品・${pages.length}枚）　※ 印刷の倍率は 100%（既定）にしてください</span>
+      <button onclick="window.print()">🖨 印刷/PDF保存</button>
+    </div>
+    ${sheets}
+    <script>
+    // 入りきらないカードだけ、文字を少しずつ小さくする
+    function fitSquares(){
+      [].slice.call(document.querySelectorAll('.sq-fit')).forEach(function(el){
+        var f = parseFloat(el.dataset.base); el.style.fontSize = f + 'px';
+        for (var n = 0; n < 14 && el.scrollHeight > el.clientHeight + 1; n++) { f *= 0.93; el.style.fontSize = f + 'px'; }
+      });
+    }
+    fitSquares(); window.addEventListener('load', fitSquares);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitSquares);
     <\/script></body></html>`);
   w.document.close();
 }
