@@ -1876,7 +1876,7 @@ tr:hover td{background:var(--cream);}
 <script type="module">
 // ===== バージョン情報 =====
 // 新しく書き出す(出力する)たびに、日付を YYYY.MM.DD 形式で更新してください
-const APP_VERSION = 'v2026.10.29-73';
+const APP_VERSION = 'v2026.10.29-74';
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc, onSnapshot, writeBatch, getDoc }
@@ -4036,7 +4036,7 @@ function mpExportSquarePDF(items, cols, detailKeys=[], landscape=false) {
       : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:2.4em;background:#F0EBE0;">💍</div>`;
     const lines = it.prices.map((pr, i) => `
       <div style="display:flex;align-items:baseline;gap:0.2em 0.6em;flex-wrap:wrap;padding:0.25em 0;${i>0?'border-top:1px solid #EFE4CC;':''}">
-        <span style="font-size:0.8em;padding:0 0.45em;border-radius:3px;font-weight:700;${MP_MAT_STYLE[pr.material]||''}">${pr.material}</span>
+        <span style="display:inline-block;min-width:3.2em;text-align:center;box-sizing:border-box;font-size:0.8em;padding:0 0.45em;border-radius:3px;font-weight:700;${MP_MAT_STYLE[pr.material]||''}">${pr.material}</span>
         ${plDetailSegments(pr.product, detailKeys, true).map(t => `<span style="white-space:nowrap;font-size:0.85em;color:#6B6152;">${t}</span>`).join('')}
         <span style="margin-left:auto;white-space:nowrap;"><span style="font-size:1.1em;font-weight:700;color:#2C2C2C;">${pr.price.toLocaleString()}円</span> <span style="font-size:0.72em;color:#A8937A;">(税込${Math.round(pr.price*1.1).toLocaleString()}円)</span></span>
       </div>`).join('');
@@ -4122,13 +4122,13 @@ function mpExportTagPDF(items, cols, detailKeys=[], landscape=false, horizontal=
     const priceLines = detailKeys.length
       ? it.prices.map((pr, i) => `
       <div style="display:flex;justify-content:${lineJustify};align-items:baseline;gap:2px 8px;flex-wrap:wrap;${gothic}padding:4px 0;${i>0?'border-top:1px solid #E8D5B0;':''}">
-        <span style="font-size:${tier===1?11:9}px;padding:1px 6px;border-radius:3px;font-weight:700;${MP_MAT_STYLE[pr.material]||''}">${pr.material}</span>
+        <span style="display:inline-block;min-width:3.2em;text-align:center;box-sizing:border-box;font-size:${tier===1?11:9}px;padding:1px 6px;border-radius:3px;font-weight:700;${MP_MAT_STYLE[pr.material]||''}">${pr.material}</span>
         ${plDetailSegments(pr.product, detailKeys, tier===3).map(s => `<span style="white-space:nowrap;font-size:9px;color:#6B6152;">${s}</span>`).join('')}
         <span style="font-size:${tier===1?14:tier===2?12:11}px;font-weight:700;color:#2C2C2C;white-space:nowrap;">${pr.price.toLocaleString()}円</span>
       </div>`).join('')
       : it.prices.map(pr => `
       <div style="display:flex;justify-content:${lineJustify};align-items:baseline;gap:6px;flex-wrap:wrap;${gothic}">
-        <span style="font-size:${tier===1?11:9}px;padding:1px 6px;border-radius:3px;font-weight:700;${MP_MAT_STYLE[pr.material]||''}">${pr.material}</span>
+        <span style="display:inline-block;min-width:3.2em;text-align:center;box-sizing:border-box;font-size:${tier===1?11:9}px;padding:1px 6px;border-radius:3px;font-weight:700;${MP_MAT_STYLE[pr.material]||''}">${pr.material}</span>
         <span style="font-size:${tier===1?15:tier===2?13:11}px;font-weight:700;color:#2C2C2C;">${pr.price.toLocaleString()}円</span>
         <span style="font-size:${tier===1?10:9}px;color:#9A9080;">(税込${Math.round(pr.price*1.1).toLocaleString()}円)</span>
       </div>`).join('');
@@ -4171,13 +4171,13 @@ function mpExportListPDF(items, detailKeys=[]) {
     // 社内用の項目を載せるときは、金種ごとに1行（入りきらなければ2行）にして、金種の間に線を入れる
     const priceBadges = detailKeys.length ? it.prices.map((pr, i) => `
       <div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 12px;padding:5px 0;${i>0?'border-top:1px solid #E8D5B0;':''}">
-        <span style="${gothic}font-size:9px;padding:1px 6px;border-radius:3px;font-weight:700;${MP_MAT_STYLE[pr.material]||''}">${pr.material}</span>
+        <span style="display:inline-block;min-width:3.2em;text-align:center;box-sizing:border-box;${gothic}font-size:9px;padding:1px 6px;border-radius:3px;font-weight:700;${MP_MAT_STYLE[pr.material]||''}">${pr.material}</span>
         ${plDetailSegments(pr.product, detailKeys).map(s => `<span style="${gothic}font-size:10px;color:#6B6152;white-space:nowrap;">${s}</span>`).join('')}
         <span style="${gothic}font-size:12px;font-weight:700;color:#2C2C2C;white-space:nowrap;margin-left:auto;">${pr.price.toLocaleString()}円</span>
         <span style="${gothic}font-size:10px;color:#9A9080;white-space:nowrap;">(税込${Math.round(pr.price*1.1).toLocaleString()}円)</span>
       </div>`).join('') : it.prices.map(pr => `
       <span style="display:inline-flex;align-items:baseline;gap:4px;margin-right:10px;">
-        <span style="${gothic}font-size:9px;padding:1px 6px;border-radius:3px;font-weight:700;${MP_MAT_STYLE[pr.material]||''}">${pr.material}</span>
+        <span style="display:inline-block;min-width:3.2em;text-align:center;box-sizing:border-box;${gothic}font-size:9px;padding:1px 6px;border-radius:3px;font-weight:700;${MP_MAT_STYLE[pr.material]||''}">${pr.material}</span>
         <span style="${gothic}font-size:12px;font-weight:700;color:#2C2C2C;">${pr.price.toLocaleString()}円</span>
         <span style="${gothic}font-size:10px;color:#9A9080;">(税込${Math.round(pr.price*1.1).toLocaleString()}円)</span>
       </span>`).join('');
