@@ -1876,7 +1876,7 @@ tr:hover td{background:var(--cream);}
 <script type="module">
 // ===== バージョン情報 =====
 // 新しく書き出す(出力する)たびに、日付を YYYY.MM.DD 形式で更新してください
-const APP_VERSION = 'v2026.10.29-72';
+const APP_VERSION = 'v2026.10.29-73';
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc, onSnapshot, writeBatch, getDoc }
@@ -4012,7 +4012,7 @@ function mpPageWrapper(bodyHTML, count, landscape=false) {
 }
 
 // ===== 正方形のカード（1枚に入る数を固定して、ページごとにきっちり区切る） =====
-// 上半分：左に写真（正方形）、右に商品名・型番・石の名前。下半分：金種ごとの価格を1行ずつ。
+// 上：左に写真（正方形・幅の約60%）、右に商品名・型番・石の名前。下：金種ごとの価格（税込も小さく）を1行ずつ。
 // 入りきらないカードは、印刷画面を開いたときにそのカードだけ文字を小さくする。
 function mpExportSquarePDF(items, cols, detailKeys=[], landscape=false) {
   mergeLocalImages();
@@ -4027,6 +4027,7 @@ function mpExportSquarePDF(items, cols, detailKeys=[], landscape=false) {
   const headH = 11, gap = 3;
   const S = Math.floor(Math.min((W - gap*(cols-1)) / cols, (H - headH - gap*(rows-1)) / rows) * 10) / 10;
   const basePx = Math.round(S * 3.78 / 19 * 10) / 10;   // カードの大きさに合わせた文字の大きさ
+  const imgS = Math.round((S - 4) * 0.6 * 10) / 10;      // 写真はカードの幅の約60%
   const slash = t => String(t || '').split(' / ').map(x => `<span style="white-space:nowrap;">${stoneEsc(x)}</span>`).join(' / ');
 
   const card = it => {
@@ -4037,11 +4038,11 @@ function mpExportSquarePDF(items, cols, detailKeys=[], landscape=false) {
       <div style="display:flex;align-items:baseline;gap:0.2em 0.6em;flex-wrap:wrap;padding:0.25em 0;${i>0?'border-top:1px solid #EFE4CC;':''}">
         <span style="font-size:0.8em;padding:0 0.45em;border-radius:3px;font-weight:700;${MP_MAT_STYLE[pr.material]||''}">${pr.material}</span>
         ${plDetailSegments(pr.product, detailKeys, true).map(t => `<span style="white-space:nowrap;font-size:0.85em;color:#6B6152;">${t}</span>`).join('')}
-        <span style="margin-left:auto;font-size:1.1em;font-weight:700;color:#2C2C2C;white-space:nowrap;">${pr.price.toLocaleString()}円</span>
+        <span style="margin-left:auto;white-space:nowrap;"><span style="font-size:1.1em;font-weight:700;color:#2C2C2C;">${pr.price.toLocaleString()}円</span> <span style="font-size:0.72em;color:#A8937A;">(税込${Math.round(pr.price*1.1).toLocaleString()}円)</span></span>
       </div>`).join('');
     return `<div style="width:${S}mm;height:${S}mm;border:1px solid #E8D5B0;border-radius:6px;overflow:hidden;background:white;box-sizing:border-box;padding:2mm;display:flex;flex-direction:column;${gothic}">
-      <div style="display:flex;gap:2mm;height:${(S-4)/2}mm;flex-shrink:0;">
-        <div style="width:${(S-4)/2}mm;height:${(S-4)/2}mm;flex-shrink:0;background:#f8f5f0;border-radius:4px;overflow:hidden;">${img}</div>
+      <div style="display:flex;gap:2mm;height:${imgS}mm;flex-shrink:0;">
+        <div style="width:${imgS}mm;height:${imgS}mm;flex-shrink:0;background:#f8f5f0;border-radius:4px;overflow:hidden;">${img}</div>
         <div class="sq-fit" data-base="${basePx}" style="flex:1;min-width:0;height:100%;overflow:hidden;font-size:${basePx}px;line-height:1.3;display:flex;flex-direction:column;justify-content:center;">
           <div style="font-family:'Cormorant Garamond',serif;font-size:1.25em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${stoneEsc(it.name)}</div>
           <div style="font-size:1em;color:#2C2C2C;margin-top:0.1em;">${slash(it.codeDisplay)}</div>
@@ -4083,11 +4084,11 @@ function mpExportSquarePDF(items, cols, detailKeys=[], landscape=false) {
     </div>
     ${sheets}
     <script>
-    // 入りきらないカードだけ、文字を少しずつ小さくする
+    // 入りきらないカードだけ（縦にも横にも）、文字を少しずつ小さくする
     function fitSquares(){
       [].slice.call(document.querySelectorAll('.sq-fit')).forEach(function(el){
         var f = parseFloat(el.dataset.base); el.style.fontSize = f + 'px';
-        for (var n = 0; n < 14 && el.scrollHeight > el.clientHeight + 1; n++) { f *= 0.93; el.style.fontSize = f + 'px'; }
+        for (var n = 0; n < 16 && (el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1); n++) { f *= 0.93; el.style.fontSize = f + 'px'; }
       });
     }
     fitSquares(); window.addEventListener('load', fitSquares);
