@@ -312,16 +312,32 @@ canvas { max-width: 100%; }
     <span id="cloud-indicator" style="font-size:10px;color:var(--muted);white-space:nowrap;margin-right:6px;cursor:pointer;" onclick="cloudLogout()" title="ログアウト"></span><span id="autosave-indicator" style="font-size:10px;color:var(--muted);opacity:0.5;white-space:nowrap;transition:opacity 0.5s;margin-right:4px;"></span><button id="undo-btn" class="btn btn-outline btn-sm" onclick="undo()" disabled style="color:var(--muted);">↩ (0)</button>
     <button id="redo-btn" class="btn btn-outline btn-sm" onclick="redo()" disabled style="color:var(--muted);">↪ (0)</button>
     <button class="btn btn-outline btn-sm" onclick="calcAll();renderTable();toast('グループを更新しました ✅')" style="color:#2D5E3A;border-color:#4A7C59;" title="追加・変更をグループに即反映">🔄 グループ更新</button>
-    <button class="btn btn-outline btn-sm" onclick="if(confirm('商品データを全て削除しますか？'))resetProducts()" style="color:var(--danger);border-color:var(--danger);">🗑 商品リセット</button>
     <input type="file" id="import-all-file" accept=".xlsx" style="display:none" onchange="importAllFromBackup(this)">
     <input type="file" id="import-cost-file" accept=".xlsx" style="display:none" onchange="importFromCostExcel(this)">
     <input type="file" id="import-backup-file2" accept=".xlsx" style="display:none" onchange="importFromBackup(this)">
-    <button class="btn btn-outline btn-sm" onclick="saveSettings()">💾 設定を保存</button>
-    <button class="btn btn-outline btn-sm" onclick="document.getElementById('load-settings-file').click()">📂 設定を読込</button>
-    <button class="btn btn-outline btn-sm" onclick="clearLocalData()" style="color:#C25C5C;border-color:#C25C5C;">🗑 ローカル消去</button>
     <input type="file" id="load-settings-file" accept=".xlsx" style="display:none" onchange="loadSettings(this)">
-    <button class="btn btn-gold btn-sm" onclick="document.getElementById('load-history-file').click()">📋 履歴を読込</button>
     <input type="file" id="load-history-file" accept=".xlsx" style="display:none" onchange="loadHistory(this)">
+    <!-- 普段は使わないボタンをまとめた場所（押すと開く） -->
+    <details id="tools-menu" style="position:relative;">
+      <summary class="btn btn-outline btn-sm" style="list-style:none;cursor:pointer;">🧰 詳しい設定・ツール ▾</summary>
+      <div onclick="if(event.target.closest('button'))document.getElementById('tools-menu').removeAttribute('open')"
+        style="position:absolute;right:0;top:calc(100% + 6px);width:290px;max-width:90vw;background:white;border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,0.18);padding:12px;z-index:500;display:flex;flex-direction:column;gap:6px;">
+        <div style="font-size:10px;color:var(--muted);">データの保存・読み込み（クラウドに自動保存されるので、普段はいりません）</div>
+        <button class="btn btn-outline btn-sm" style="width:100%;justify-content:flex-start;" onclick="saveSettings()">💾 設定を保存（Excel）</button>
+        <button class="btn btn-outline btn-sm" style="width:100%;justify-content:flex-start;" onclick="document.getElementById('load-settings-file').click()">📂 設定を読込</button>
+        <button class="btn btn-outline btn-sm" style="width:100%;justify-content:flex-start;" onclick="document.getElementById('load-history-file').click()">📋 履歴を読込</button>
+        <button class="btn btn-outline btn-sm" style="width:100%;justify-content:flex-start;" onclick="document.getElementById('import-products-file').click()">📂 Excelから商品を読込</button>
+        <div style="font-size:10px;color:var(--muted);margin-top:6px;">在庫管理（BIJOU Manager）との昔のやり取り</div>
+        <button class="btn btn-outline btn-sm" style="width:100%;justify-content:flex-start;" onclick="openBijouPriceImport()" title="在庫管理アプリ（BIJOU Manager）の価格を、確定価格に取り込みます">🏷 在庫管理の価格を取込</button>
+        <button class="btn btn-outline btn-sm" style="width:100%;justify-content:flex-start;" onclick="document.getElementById('import-backup-file').click()">📂 在庫管理バックアップ読込</button>
+        <button class="btn btn-outline btn-sm" style="width:100%;justify-content:flex-start;" onclick="document.getElementById('import-confirmed-file').click()">📂 確定価格を読込</button>
+        <button class="btn btn-outline btn-sm" style="width:100%;justify-content:flex-start;" onclick="exportBijouExcel()">📤 BIJOU Manager用Excel出力</button>
+        <div style="font-size:10px;color:#C25C5C;margin-top:6px;">⚠ 注意して使うもの（たくさんの商品が一度に変わります）</div>
+        <button class="btn btn-outline btn-sm" style="width:100%;justify-content:flex-start;color:var(--gold-dark);border-color:var(--gold);" onclick="applyPrevRateToAll()" title="保存済みの原価率を新しい地金価格に適用">🔄 前回原価率で価格更新</button>
+        <button class="btn btn-outline btn-sm" style="width:100%;justify-content:flex-start;color:#C25C5C;border-color:#C25C5C;" onclick="clearLocalData()">🗑 ローカル消去</button>
+        <button class="btn btn-outline btn-sm" style="width:100%;justify-content:flex-start;color:var(--danger);border-color:var(--danger);" onclick="if(confirm('商品データを全て削除しますか？'))resetProducts()">🗑 商品リセット</button>
+      </div>
+    </details>
   </div>
 </div>
 
@@ -454,9 +470,7 @@ canvas { max-width: 100%; }
     <div class="card-title">💍 商品データ
       <div style="margin-left:auto;display:flex;gap:8px;">
         <button class="btn btn-outline btn-sm" onclick="addProduct()">＋ 商品追加</button>
-        <button class="btn btn-outline btn-sm" onclick="document.getElementById('import-products-file').click()">📂 Excelから読込</button>
         <button class="btn btn-outline btn-sm" onclick="openDeliveryImport()" style="color:#2E7BB5;border-color:#2E7BB5;" title="納品書アプリの最新の納品書から、グラム数・制作費・石代・パーツ代を取り込みます">📦 納品書から取込</button>
-        <button class="btn btn-outline btn-sm" onclick="openBijouPriceImport()" style="color:#2D5E3A;border-color:#4A7C59;" title="在庫管理アプリ（BIJOU Manager）の価格を、確定価格に取り込みます">🏷 在庫管理の価格を取込</button>
         <button class="btn btn-outline btn-sm" onclick="openReviewList()" style="color:#C25C5C;border-color:#C25C5C;font-weight:600;" title="原価率が上限を超えている商品を一覧にします">⚠ 見直しリスト</button>
         <button class="btn btn-outline btn-sm" onclick="openSendToBijou()" style="color:#fff;background:#2E7BB5;border-color:#2E7BB5;font-weight:600;" title="確定価格と原価を在庫管理アプリ（BIJOU Manager）に反映します">📤 BIJOU に反映</button>
         <button class="btn btn-outline btn-sm" onclick="openBackupHistory()" style="color:#2E7BB5;border-color:#2E7BB5;" title="在庫管理に反映した履歴を見て、元に戻せます">🕘 反映の履歴</button>
@@ -494,8 +508,6 @@ canvas { max-width: 100%; }
       <label class="toggle-check"><input type="checkbox" id="show-diff" onchange="renderTable()"> 前回比</label>
       <label class="toggle-check"><input type="checkbox" id="show-profit" onchange="renderTable()"> 実粗利</label>
       <label class="toggle-check"><input type="checkbox" id="show-dept-profit" onchange="renderTable()"> 百貨店粗利</label>
-      <span style="margin:0 6px;color:var(--border);">│</span>
-      <button onclick="applyPrevRateToAll()" style="margin-left:8px;font-size:11px;background:#FDF3DC;border:1px solid var(--gold);border-radius:6px;padding:3px 10px;cursor:pointer;color:var(--gold-dark);font-weight:600;" title="保存済みの原価率を新しい地金価格に適用">🔄 前回原価率で価格更新</button>
 
     </div>
     <!-- 絞り込みボタン -->
@@ -564,11 +576,8 @@ canvas { max-width: 100%; }
       <div class="card-title">📊 全商品一覧
         <span style="font-size:11px;color:var(--muted);font-weight:400;margin-left:8px;">行をクリックで詳細＆シミュ表示</span>
         <div style="margin-left:auto;display:flex;gap:8px;">
-          <button class="btn btn-outline btn-sm" onclick="document.getElementById('import-backup-file').click()">📂 在庫管理バックアップ読込</button>
           <input type="file" id="import-backup-file" accept=".xlsx" style="display:none" onchange="importFromBackup(this)">
-          <button class="btn btn-outline btn-sm" onclick="document.getElementById('import-confirmed-file').click()">📂 確定価格を読込</button>
           <input type="file" id="import-confirmed-file" accept=".xlsx" style="display:none" onchange="importConfirmedPrices(this)">
-          <button class="btn btn-gold btn-sm" onclick="exportBijouExcel()">📤 BIJOU Manager用Excel出力</button>
         </div>
       </div>
       <!-- 凡例 -->
@@ -4701,6 +4710,11 @@ function startStoneNames() {
     refreshStoneInputs();
   }, e => console.warn('石の名前を読み込めませんでした', e));
 }
+
+document.addEventListener('click', e => {
+  const menu = document.getElementById('tools-menu');
+  if (menu && menu.open && !menu.contains(e.target)) menu.removeAttribute('open');
+});
 
 async function startCloud() {
   await waitForLogin();
