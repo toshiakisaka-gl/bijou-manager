@@ -1876,7 +1876,7 @@ tr:hover td{background:var(--cream);}
 <script type="module">
 // ===== バージョン情報 =====
 // 新しく書き出す(出力する)たびに、日付を YYYY.MM.DD 形式で更新してください
-const APP_VERSION = 'v2026.10.29-74';
+const APP_VERSION = 'v2026.10.31-75';
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc, onSnapshot, writeBatch, getDoc }
@@ -2049,6 +2049,7 @@ async function initFirebase() {
         renderOrderProducts(document.querySelector('#panel-order .search-input')?.value || '');
       }
       if (products.length>0) { const ig=document.getElementById('import-guide'); if(ig)ig.style.display='none'; }
+      scheduleStaffSync();
     });
 
     // 石の名前（価格アプリと共通）。どちらで直してもすぐ反映されるように変更を監視する
@@ -2059,6 +2060,7 @@ async function initFirebase() {
     }, e => console.warn('石の名前を読み込めませんでした', e));
 
     dbReady = true;
+    scheduleStaffSync();
     showStatus('クラウド接続済み ☁️','success');
     updatePendingOrderBadge();
   } catch(e) {
@@ -2760,6 +2762,83 @@ function exportBackup() {
 }
 window.exportBackup = exportBackup;
 
+// ===== 販売員さん用のデータ（staff_products） =====
+// 販売員さん用ページ（staff.html）はここだけを読む。原価・掛け率・売上・お客様の情報・メモは入れない。
+// 商品が変わるたびに、変わった分だけ書き込む。
+const STAFF_LOCS = ['main', 'kyoto', 'dresslave', 'okinawa'];
+let staffSynced = null;   // 商品id → 前回書き込んだ内容
+let staffSyncTimer = null;
+let staffSyncRunning = false;
+let staffSyncAgain = false;
+
+// Firestore は項目の順番を変えて返すので、順番をそろえてから比べる
+function staffStable(v) {
+  if (Array.isArray(v)) return '[' + v.map(staffStable).join(',') + ']';
+  if (v && typeof v === 'object') return '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + staffStable(v[k])).join(',') + '}';
+  return JSON.stringify(v);
+}
+
+function staffDocOf(p) {
+  const stock = {};
+  STAFF_LOCS.forEach(loc => {
+    const sizes = {};
+    Object.keys(p.stock?.[loc] || {}).sort().forEach(sz => {
+      const n = parseFloat(p.stock[loc][sz]) || 0;
+      if (n > 0) sizes[sz] = n;
+    });
+    stock[loc] = sizes;
+  });
+  const gram = parseFloat(plPriceAppMap?.[plNormCode(p.code)]?.gram) || 0;
+  return {
+    name: p.name || '', code: p.code || '', material: p.material || '', category: p.category || '',
+    price: p.price || 0, gram, imageUrl: p.imageUrl || '', stock,
+  };
+}
+
+function scheduleStaffSync() {
+  if (STORE_MODE || !dbReady) return;
+  clearTimeout(staffSyncTimer);
+  staffSyncTimer = setTimeout(syncStaffProducts, 3000);
+}
+
+async function syncStaffProducts() {
+  if (staffSyncRunning) { staffSyncAgain = true; return; }
+  staffSyncRunning = true;
+  try {
+    await plLoadPriceApp();
+    if (!plPriceAppMap) return;   // グラムが読めないときは書き込まない（空で上書きしないように）
+    if (!staffSynced) {
+      const snap = await getDocs(collection(db, 'staff_products'));
+      staffSynced = {};
+      snap.forEach(d => { const { updatedAt, ...rest } = d.data(); staffSynced[d.id] = staffStable(rest); });
+    }
+    const current = {};
+    // 商品ページで最初から隠している「★ チェック商品」と、型番のない商品は載せない
+    products.filter(p => p.code && !checkedProducts.has(p.id)).forEach(p => { current[p.id] = staffStable(staffDocOf(p)); });
+    const writes = Object.keys(current).filter(id => staffSynced[id] !== current[id]);
+    const removes = Object.keys(staffSynced).filter(id => !(id in current));
+    // 読み込みの失敗などで商品が急に減ったときは消さない
+    const safeRemoves = removes.length > 20 && removes.length > Object.keys(staffSynced).length / 2 ? [] : removes;
+    const now = new Date().toISOString();
+    const ops = [...writes.map(id => ['set', id]), ...safeRemoves.map(id => ['del', id])];
+    for (let i = 0; i < ops.length; i += 400) {
+      const batch = writeBatch(db);
+      ops.slice(i, i + 400).forEach(([op, id]) => {
+        const ref = doc(db, 'staff_products', id);
+        if (op === 'set') batch.set(ref, { ...JSON.parse(current[id]), updatedAt: now });
+        else batch.delete(ref);
+      });
+      await batch.commit();
+      ops.slice(i, i + 400).forEach(([op, id]) => { if (op === 'set') staffSynced[id] = current[id]; else delete staffSynced[id]; });
+    }
+  } catch (e) {
+    console.warn('販売員さん用のデータを更新できませんでした', e);
+  } finally {
+    staffSyncRunning = false;
+    if (staffSyncAgain) { staffSyncAgain = false; scheduleStaffSync(); }
+  }
+}
+
 // ===== 石の名前（型番ごと・全金種で共通） =====
 // 価格アプリと同じ stone_names/{型番} に1つだけ保存するので、どちらで直しても同じになる
 let stoneNames = {};   // 型番（金種を除いたもの）→ 石の名前
@@ -2912,13 +2991,14 @@ function plNormCode(c) {
 
 // 価格表の設定画面を開いたときに、価格アプリのデータを先に読み込んでおく（出力ボタンを押したときに待たないように）
 function plLoadPriceApp() {
-  if (STORE_MODE || plPriceAppMap || plPriceAppLoading || !dbReady) return;
+  if (STORE_MODE || plPriceAppMap || plPriceAppLoading || !dbReady) return plPriceAppLoading;
   plPriceAppLoading = getDocs(collection(db, 'price_items')).then(snap => {
     const map = {};
     snap.forEach(d => { const it = d.data(); const c = plNormCode(it.codeFull); if (c && !(c in map)) map[c] = it; });
     plPriceAppMap = map;
   }).catch(e => { console.warn('価格アプリのデータを読み込めませんでした', e); })
     .finally(() => { plPriceAppLoading = null; plUpdateDetailStatus(); });
+  return plPriceAppLoading;
 }
 
 function plUpdateDetailStatus() {

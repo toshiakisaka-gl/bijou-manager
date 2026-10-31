@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SAKA 商品一覧</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300&family=Zen+Kaku+Gothic+New:wght@300;400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --gold:#C9A96E;--gold-light:#E8D5B0;--gold-dark:#8B6914;
+  --cream:#FAF7F2;--cream-dark:#F0EBE0;--charcoal:#2C2C2C;
+  --muted:#7D7466;--white:#FFFFFF;--danger:#C25C5C;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Zen Kaku Gothic New',sans-serif;background:var(--cream);color:var(--charcoal);min-height:100vh;font-weight:400;}
+.header{background:var(--charcoal);color:var(--cream);padding:0 16px;height:52px;display:flex;align-items:center;justify-content:space-between;gap:12px;position:sticky;top:0;z-index:10;}
+.logo{font-family:'Cormorant Garamond',serif;font-size:20px;letter-spacing:5px;color:var(--gold);font-weight:300;white-space:nowrap;}
+.user{background:none;border:none;color:var(--gold-light);font:inherit;font-size:11px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.main{max-width:1280px;margin:0 auto;padding:16px;}
+.filters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;}
+.filters input,.filters select{font:inherit;font-size:14px;padding:9px 12px;border:1px solid var(--gold-light);border-radius:8px;background:var(--white);color:var(--charcoal);}
+.filters input{flex:1 1 220px;min-width:0;}
+.filters select{flex:0 1 auto;}
+.info{font-size:12px;color:var(--muted);margin-bottom:14px;}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;}
+.card{background:var(--white);border:1px solid var(--cream-dark);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;}
+.photo{aspect-ratio:1/1;background:#f8f5f0;display:flex;align-items:center;justify-content:center;font-size:48px;}
+.photo img{width:100%;height:100%;object-fit:contain;display:block;}
+.body{padding:12px 14px 14px;}
+.name{font-family:'Cormorant Garamond',serif;font-size:19px;line-height:1.2;}
+.code{font-size:13px;margin-top:2px;}
+.stone{font-size:12px;color:var(--muted);margin-top:3px;}
+.line{border-top:1px solid var(--cream-dark);margin-top:10px;padding-top:10px;}
+.top{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;}
+.mat{display:inline-block;min-width:3.4em;text-align:center;font-size:11px;font-weight:700;padding:1px 6px;border-radius:3px;border:1px solid #C0C0C0;background:#F4F4F4;color:#505050;}
+.mat-K18{background:#FDF3DC;color:#7A5C10;border-color:#E8C96E;}
+.mat-K10{background:#FFF8EC;color:#8A6518;border-color:#D4AA60;}
+.mat-Pt{background:#EEF0F5;color:#4A5068;border-color:#B0B8CC;}
+.gram{font-size:12px;color:var(--muted);}
+.price{margin-left:auto;font-size:15px;font-weight:700;white-space:nowrap;}
+.tax{font-size:11px;color:var(--muted);white-space:nowrap;}
+.stock{display:grid;grid-template-columns:auto 1fr;gap:2px 8px;font-size:12px;margin-top:6px;}
+.stock .loc{color:var(--muted);white-space:nowrap;}
+.stock .none{color:#A89F90;}
+.empty{padding:48px 16px;text-align:center;color:var(--muted);font-size:14px;line-height:1.8;}
+.login{position:fixed;inset:0;background:var(--charcoal);display:none;align-items:center;justify-content:center;padding:24px;z-index:20;}
+.login-box{max-width:360px;width:100%;text-align:center;color:var(--cream);}
+.login-box .logo{font-size:30px;margin-bottom:6px;}
+.login-box p{font-size:13px;line-height:1.8;margin:16px 0;}
+.btn{width:100%;font:inherit;font-size:14px;padding:12px;border-radius:8px;border:none;background:var(--gold);color:var(--charcoal);font-weight:500;cursor:pointer;}
+.btn-sub{background:none;color:var(--gold-light);border:1px solid var(--gold-light);margin-top:10px;display:none;}
+.err{color:#F0B8B8;display:none;}
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="logo">SAKA</div>
+  <button class="user" id="user" title="ログアウト"></button>
+</div>
+<div class="main">
+  <div class="filters">
+    <input type="search" id="q" placeholder="商品名・型番・石の名前で検索" aria-label="検索">
+    <select id="mat" aria-label="金種"><option value="">すべての金種</option></select>
+    <select id="cat" aria-label="種類"><option value="">すべての種類</option></select>
+    <select id="loc" aria-label="在庫">
+      <option value="">在庫なしも表示</option>
+      <option value="any">在庫ありのみ</option>
+      <option value="main">メインに在庫あり</option>
+      <option value="kyoto">京都店舗に在庫あり</option>
+      <option value="dresslave">DRESSLAVE に在庫あり</option>
+      <option value="okinawa">沖縄ホテルに在庫あり</option>
+    </select>
+  </div>
+  <div class="info" id="info">読み込み中…</div>
+  <div class="grid" id="grid"></div>
+</div>
+<div class="login" id="login">
+  <div class="login-box">
+    <div class="logo">SAKA</div>
+    <p id="login-msg">商品一覧を見るには、Google アカウントでログインしてください。</p>
+    <p class="err" id="login-err"></p>
+    <button class="btn" id="login-btn">Google でログイン</button>
+    <button class="btn btn-sub" id="switch-btn">別のアカウントでログイン</button>
+  </div>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getFirestore, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+
+const app = initializeApp({
+  apiKey: "AIzaSyCMxMIWIniOZ8pngqwq4YhmEQ4tTZfZYSI",
+  authDomain: "jewelry-manager-sa.firebaseapp.com",
+  projectId: "jewelry-manager-sa",
+  storageBucket: "jewelry-manager-sa.firebasestorage.app",
+  messagingSenderId: "337411241515",
+  appId: "1:337411241515:web:937bf8d008ffb253295c6e"
+});
+const db = getFirestore(app);
+const auth = getAuth(app);
+
+const LOCS = [['main','メイン'],['kyoto','京都店舗'],['dresslave','DRESSLAVE'],['okinawa','沖縄ホテル']];
+const MAT_ORDER = ['K18','K10','Pt','SV','SVクリア'];
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+let items = [];
+let stones = {};
+
+// 金種を除いた型番（BIJOU マネージャー・価格アプリと同じ決まり）
+const normCode = c => String(c || '').trim().toUpperCase().replace(/[‐－―ー−]/g, '-').replace(/\s+/g, '');
+const baseKey = c => normCode(c).replace(/-(?:18|10|PT|SV-C|SV)$/, '').replace(/\//g, '_');
+
+const count = (p, loc) => Object.values(p.stock?.[loc] || {}).reduce((a, b) => a + (parseFloat(b) || 0), 0);
+const total = p => LOCS.reduce((a, [l]) => a + count(p, l), 0);
+const sizes = (p, loc) => Object.entries(p.stock?.[loc] || {})
+  .sort((a, b) => parseFloat(a[0]) - parseFloat(b[0]))
+  .map(([sz, n]) => /^\d/.test(sz) ? `${esc(sz)}号×${n}` : `${esc(sz)}×${n}`).join('、');
+
+function matches(p, stone) {
+  const q = $('q').value.trim().toLowerCase();
+  if (q && !`${p.name} ${p.code} ${stone}`.toLowerCase().includes(q)) return false;
+  if ($('mat').value && p.material !== $('mat').value) return false;
+  if ($('cat').value && p.category !== $('cat').value) return false;
+  const loc = $('loc').value;
+  if (loc === 'any' && total(p) <= 0) return false;
+  if (loc && loc !== 'any' && count(p, loc) <= 0) return false;
+  return true;
+}
+
+function card(g) {
+  const photo = g.members.find(p => /^https?:\/\//.test(p.imageUrl || ''));
+  const img = photo ? `<img src="${esc(photo.imageUrl)}" alt="${esc(g.name)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.textContent='💍'">` : '💍';
+  const lines = g.members.map(p => `
+    <div class="line">
+      <div class="top">
+        <span class="mat mat-${esc(p.material)}">${esc(p.material || '－')}</span>
+        ${p.gram > 0 ? `<span class="gram">${Math.round(p.gram * 100) / 100}g</span>` : ''}
+        <span class="price">${(p.price || 0).toLocaleString()}円</span>
+        <span class="tax">税込 ${Math.round((p.price || 0) * 1.1).toLocaleString()}円</span>
+      </div>
+      <div class="stock">${LOCS.map(([l, label]) => {
+        const n = count(p, l);
+        return `<span class="loc">${label}</span><span class="${n > 0 ? '' : 'none'}">${n > 0 ? `${n}点　${sizes(p, l)}` : 'なし'}</span>`;
+      }).join('')}</div>
+    </div>`).join('');
+  return `<article class="card">
+    <div class="photo">${img}</div>
+    <div class="body">
+      <div class="name">${esc(g.name)}</div>
+      <div class="code">${esc(g.key)}</div>
+      ${g.stone ? `<div class="stone">${esc(g.stone)}</div>` : ''}
+      ${lines}
+    </div>
+  </article>`;
+}
+
+function render() {
+  const groups = {};
+  items.forEach(p => {
+    const key = baseKey(p.code);
+    const stone = stones[key] || '';
+    if (!matches(p, stone)) return;
+    if (!groups[key]) groups[key] = { key, name: p.name, stone, members: [] };
+    groups[key].members.push(p);
+  });
+  const list = Object.values(groups).sort((a, b) => a.key.localeCompare(b.key, 'ja'));
+  list.forEach(g => g.members.sort((a, b) => MAT_ORDER.indexOf(a.material) - MAT_ORDER.indexOf(b.material)));
+  $('grid').innerHTML = list.map(card).join('');
+  const latest = items.reduce((m, p) => (p.updatedAt > m ? p.updatedAt : m), '');
+  const when = latest ? new Date(latest).toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' }) : '－';
+  $('info').textContent = `${list.length}型番　価格は税抜（横に税込）　データの更新：${when}`;
+  if (!list.length) $('grid').innerHTML = `<div class="empty" style="grid-column:1/-1;">${items.length ? '条件に合う商品がありません。' : 'まだ商品のデータがありません。'}</div>`;
+}
+
+function fillSelect(id, values) {
+  const el = $(id), cur = el.value;
+  el.length = 1;
+  values.forEach(v => el.add(new Option(v, v)));
+  if (values.includes(cur)) el.value = cur;
+}
+
+function showDenied(email) {
+  $('login').style.display = 'flex';
+  $('login-msg').textContent = `このアカウント（${email}）には、見る権限がありません。`;
+  $('login-btn').style.display = 'none';
+  $('switch-btn').style.display = 'block';
+}
+
+let started = false;
+function start(user) {
+  if (started) return;
+  started = true;
+  onSnapshot(collection(db, 'staff_products'), snap => {
+    items = [];
+    snap.forEach(d => items.push(d.data()));
+    fillSelect('mat', MAT_ORDER.filter(m => items.some(p => p.material === m)));
+    fillSelect('cat', [...new Set(items.map(p => p.category).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ja')));
+    render();
+  }, e => {
+    console.warn(e);
+    if (e.code === 'permission-denied') showDenied(user.email);
+    else $('info').textContent = '読み込めませんでした。通信を確認して、もう一度開いてください。';
+  });
+  onSnapshot(collection(db, 'stone_names'), snap => {
+    stones = {};
+    snap.forEach(d => { const v = d.data(); if (v.name) stones[d.id] = v.name; });
+    render();
+  }, e => console.warn('石の名前を読み込めませんでした', e));
+}
+
+async function login() {
+  try {
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+    await signInWithPopup(auth, provider);
+  } catch (e) {
+    if (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') return;
+    $('login-err').textContent = `ログインできませんでした（${e.code}）`;
+    $('login-err').style.display = 'block';
+  }
+}
+
+$('login-btn').onclick = login;
+$('switch-btn').onclick = async () => { await signOut(auth); location.reload(); };
+$('user').onclick = async () => { if (confirm('ログアウトしますか？')) { await signOut(auth); location.reload(); } };
+['q','mat','cat','loc'].forEach(id => $(id).addEventListener('input', render));
+
+onAuthStateChanged(auth, user => {
+  if (!user) { $('login').style.display = 'flex'; return; }
+  $('login').style.display = 'none';
+  $('user').textContent = user.email + ' ⏻';
+  start(user);
+});
+</script>
+</body>
+</html>
