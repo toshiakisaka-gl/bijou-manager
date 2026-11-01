@@ -449,7 +449,7 @@ input[type="time"]{-webkit-appearance:none;}
   <div id="google-login-error" style="display:none;color:#fff;font-size:12px;max-width:360px;line-height:1.7"></div>
 </div>
 <div id="toast"></div>
-<div id="app-version" style="position:fixed;bottom:6px;right:8px;font-size:9px;color:var(--gray-3);z-index:50;pointer-events:none">v2026.11.01-1</div>
+<div id="app-version" style="position:fixed;bottom:6px;right:8px;font-size:9px;color:var(--gray-3);z-index:50;pointer-events:none">v2026.11.01-3</div>
 
 <div id="loading-overlay" class="hidden">
   <div class="loading-spinner"></div>
@@ -985,8 +985,26 @@ input[type="time"]{-webkit-appearance:none;}
   </div>
   <div class="cl-pop-body" id="cl-pop-body"></div>
   <div class="cl-pop-footer">
+    <button class="btn btn-gold btn-sm" style="margin-right:auto" onclick="event.stopPropagation();openDupModal(clPopoverEvId)">🧹 ダブりをまとめる</button>
     <button class="btn btn-outline btn-sm" onclick="closeClPopover()">閉じる</button>
     <button class="btn btn-primary btn-sm" onclick="saveClPopover()">保存</button>
+  </div>
+</div>
+
+<!-- DUPLICATE CHECKLIST MODAL -->
+<div class="overlay" id="dup-modal">
+  <div class="modal" style="max-width:640px">
+    <div class="modal-header">
+      <div class="modal-title" id="dup-modal-title">🧹 ダブりをまとめる</div>
+      <button class="modal-close" onclick="closeModal('dup-modal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:11px;color:var(--gray-4);margin-bottom:12px;line-height:1.7">
+        似ている項目を並べています。残す項目を選び、まとめるものにチェックして「まとめる」を押してください。まとめた中に「済」があれば、残す項目も「済」になります。別の用事なら、チェックを外すか、そのままにしてください。
+      </div>
+      <div id="dup-groups" style="display:flex;flex-direction:column;gap:10px"></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-outline" onclick="closeModal('dup-modal')">閉じる</button></div>
   </div>
 </div>
 
@@ -1400,7 +1418,7 @@ function getDefaultChecklistDef(){
 
 function getChecklistDef(ev){
   var defaults=getDefaultChecklistDef();
-  var evDefs=(ev&&ev.checklistDef&&ev.checklistDef.length)?ev.checklistDef:
+  var evDefs=(ev&&ev.checklistDef&&(ev.checklistDef.length||ev.checklistEdited))?ev.checklistDef:
              (state.checklistDef&&state.checklistDef.length)?state.checklistDef:DEFAULT_CHECKLIST;
   // 社内デフォルト + イベント固有を結合（keyの重複を除去）
   var combined=defaults.slice();
@@ -1496,6 +1514,7 @@ function openClPopover(evId,e){
     return'<div class="cl-pop-row">'+
       '<span class="cl-pop-label">'+(isDone?'✅':'⬜')+' '+d.label+'</span>'+
       '<select class="cl-pop-sel'+(isDone?' done-val':'')+'" id="clp-'+d.key+'" onchange="onClSelChange(this,\''+d.key+'\')">'+opts+'</select>'+
+      (isCompanyKey(d.key)?'':'<button type="button" class="btn btn-outline btn-sm" style="align-self:flex-end" onclick="event.stopPropagation();removeChecklistItem(\''+evId+'\',\''+d.key+'\',this)">🗑 この項目を消す</button>')+
     '</div>';
   }).join('');
   var pop=document.getElementById('cl-popover');
@@ -1538,6 +1557,118 @@ function saveClPopover(){
   closeClPopover();
   renderScheduleTable();
   showToast('✓ チェックリストを更新しました');
+}
+// ── チェック項目を消す・ダブりをまとめる（社内共通の項目は対象外） ──
+function isCompanyKey(key){return getDefaultChecklistDef().some(function(d){return d.key===key;});}
+function saveChecklistEdit(ev,removedKeys,extraPatch){
+  var removedLabels=(ev.checklistRemoved||[]).slice();
+  var defs=getChecklistDef(ev).filter(function(d){
+    if(isCompanyKey(d.key))return false;
+    if(removedKeys.indexOf(d.key)>=0){if(removedLabels.indexOf(d.label)<0)removedLabels.push(d.label);return false;}
+    return true;
+  });
+  var patch={checklistDef:defs,checklistEdited:true,checklistRemoved:removedLabels};
+  Object.keys(extraPatch||{}).forEach(function(k){patch[k]=extraPatch[k];});
+  Object.keys(patch).forEach(function(k){ev[k]=patch[k];});
+  google.script.run.updateEventFields(ev.id,patch);
+  renderScheduleTable();
+}
+function removeChecklistItem(evId,key,btn){
+  var ev=state.events.find(function(x){return x.id===evId;});if(!ev)return;
+  var d=getChecklistDef(ev).find(function(x){return x.key===key;});if(!d)return;
+  if(!confirm('「'+d.label+'」を消しますか？'))return;
+  saveChecklistEdit(ev,[key]);
+  var row=btn.closest('.cl-pop-row');if(row)row.remove();
+  showToast('✓ 項目を消しました');
+}
+function clLabelCore(s){
+  return String(s||'')
+    .replace(/\d{4}-\d{1,2}-\d{1,2}/g,'')
+    .replace(/\d{1,2}\s*[\/月]\s*\d{1,2}\s*日?(\([^)]*\)|（[^）]*）)?/g,'')
+    .replace(/\d{1,2}時/g,'')
+    .replace(/締切|締め切り|〆|厳守|までに|頃|目安|日|について|ご|お|の|を|と|・|：|:|、|\s|　|[()（）\[\]「」]/g,'')
+    .toLowerCase();
+}
+function clLabelDates(s){
+  var out=[],m,re=/(\d{1,2})\s*[\/月]\s*(\d{1,2})/g;
+  while((m=re.exec(String(s||'')))){out.push(Number(m[1])+'/'+Number(m[2]));}
+  return out;
+}
+function clBigrams(s){var o={};for(var i=0;i<s.length-1;i++)o[s.slice(i,i+2)]=true;return o;}
+// 2つの項目名がどれくらい似ているか（0〜1）。日付がどちらにもあって違うときは低くする
+function checklistSimilarity(a,b){
+  var x=clLabelCore(a),y=clLabelCore(b);
+  if(!x||!y)return 0;
+  if(x===y)return 1;
+  var bx=clBigrams(x),by=clBigrams(y);
+  var kx=Object.keys(bx),ky=Object.keys(by);
+  if(!kx.length||!ky.length)return 0;
+  var same=kx.filter(function(k){return by[k];}).length;
+  var score=2*same/(kx.length+ky.length);
+  var dx=clLabelDates(a),dy=clLabelDates(b);
+  if(dx.length&&dy.length&&!dx.some(function(d){return dy.indexOf(d)>=0;}))score*=0.7;
+  return score;
+}
+function findDupGroups(ev){
+  var defs=getChecklistDef(ev).filter(function(d){return !isCompanyKey(d.key);});
+  var parent=defs.map(function(_,i){return i;});
+  function root(i){while(parent[i]!==i)i=parent[i];return i;}
+  for(var i=0;i<defs.length;i++){
+    for(var j=i+1;j<defs.length;j++){
+      if(checklistSimilarity(defs[i].label,defs[j].label)>=0.5)parent[root(j)]=root(i);
+    }
+  }
+  var groups={};
+  defs.forEach(function(d,i){var r=root(i);if(!groups[r])groups[r]=[];groups[r].push(d);});
+  return Object.keys(groups).map(function(k){return groups[k];}).filter(function(g){return g.length>1;});
+}
+var dupEvId=null,dupGroups=[];
+function openDupModal(evId){
+  var ev=state.events.find(function(x){return x.id===evId;});if(!ev)return;
+  dupEvId=evId;
+  closeClPopover();
+  document.getElementById('dup-modal-title').textContent='🧹 ダブりをまとめる — '+(ev.storeName||'');
+  renderDupGroups();
+  openModal('dup-modal');
+}
+function renderDupGroups(){
+  var ev=state.events.find(function(x){return x.id===dupEvId;});if(!ev)return;
+  dupGroups=findDupGroups(ev);
+  var wrap=document.getElementById('dup-groups');
+  if(!dupGroups.length){wrap.innerHTML='<div class="empty-state"><div class="icon">✅</div><p>似ている項目はありません</p></div>';return;}
+  wrap.innerHTML=dupGroups.map(function(g,gi){
+    // 最初に選んでおく項目：日付が書いてあるもののうち、一番短い名前
+    var keep=g.slice().sort(function(a,b){
+      var da=clLabelDates(a.label).length?0:1,db=clLabelDates(b.label).length?0:1;
+      return da-db||a.label.length-b.label.length;
+    })[0];
+    return'<div class="card" style="padding:10px 12px">'+g.map(function(d){
+      var v=ev[d.key]||getDefaultOptionValue(d);
+      var done=d.doneValues.indexOf(v)>=0;
+      return'<div style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:12px;border-bottom:1px solid var(--gray-1)">'+
+        '<label style="display:flex;align-items:center;gap:3px;font-size:10px;color:var(--gray-4);white-space:nowrap"><input type="radio" name="dup-keep-'+gi+'" value="'+d.key+'"'+(d.key===keep.key?' checked':'')+'>残す</label>'+
+        '<label style="display:flex;align-items:center;gap:3px;font-size:10px;color:var(--gray-4);white-space:nowrap"><input type="checkbox" class="dup-use-'+gi+'" value="'+d.key+'" checked>まとめる</label>'+
+        '<span style="flex:1">'+d.label+'</span>'+
+        '<span class="badge '+(done?'badge-done':'badge-not-done')+'">'+v+'</span>'+
+      '</div>';
+    }).join('')+
+    '<div style="text-align:right;margin-top:8px"><button class="btn btn-primary btn-sm" onclick="mergeDupGroup('+gi+')">まとめる</button></div></div>';
+  }).join('');
+}
+function mergeDupGroup(gi){
+  var ev=state.events.find(function(x){return x.id===dupEvId;});if(!ev)return;
+  var g=dupGroups[gi];if(!g)return;
+  var keepEl=document.querySelector('input[name="dup-keep-'+gi+'"]:checked');if(!keepEl)return;
+  var keep=g.find(function(d){return d.key===keepEl.value;});
+  var useKeys=Array.from(document.querySelectorAll('.dup-use-'+gi+':checked')).map(function(el){return el.value;});
+  var removed=g.filter(function(d){return d.key!==keep.key&&useKeys.indexOf(d.key)>=0;});
+  if(!removed.length){showToast('まとめる項目を選んでください');return;}
+  var anyDone=removed.concat([keep]).some(function(d){return d.doneValues.indexOf(ev[d.key]||'')>=0;});
+  var extra={};
+  if(anyDone&&keep.doneValues.indexOf(ev[keep.key]||'')<0)extra[keep.key]=keep.doneValues[0];
+  saveChecklistEdit(ev,removed.map(function(d){return d.key;}),extra);
+  renderDupGroups();
+  showToast('✓ '+(removed.length+1)+'件を1つにまとめました');
 }
 function closeClPopover(){
   document.getElementById('cl-popover').classList.remove('open');
@@ -4643,7 +4774,20 @@ function importData(e){
   e.target.value='';
 }
 </script>
-<script type="module">
+<script>
+// Firebase の読み込みに失敗したときは、何も出ないままにせず知らせる（保存できない画面を使わせない）
+function firebaseLoadFailed(){
+  var screen=document.getElementById('google-login-screen');
+  var err=document.getElementById('google-login-error');
+  var btn=screen.querySelector('button');
+  if(btn)btn.style.display='none';
+  err.textContent='読み込みに失敗しました。Ctrl + Shift + R を押して読み込み直してください。iPad やスマホは、ページを開き直してください。';
+  err.style.display='block';
+  screen.style.display='flex';
+}
+setTimeout(function(){if(!window.google)firebaseLoadFailed();},15000);
+</script>
+<script type="module" onerror="firebaseLoadFailed()">
 // ── Firebase 版のデータ保存 ──
 // 画面側のコードはそのままで、保存先だけを Firestore に置き換える（google.script.run と同じ呼び方で動く）
 // データはすべて sched_ で始まる場所に保存し、BIJOU のデータとは混ぜない
@@ -4741,7 +4885,11 @@ function currentEvents() { return window.state.events || []; }
 function mergeTasks(ev, tasks) {
   const existing = ev.checklistDef || [];
   const labels = existing.map(d => d.label);
-  const merged = existing.concat((tasks || []).filter(d => labels.indexOf(d.label) < 0));
+  const removed = ev.checklistRemoved || [];
+  // 同じ名前、前に消した名前、とてもよく似た名前の項目は増やさない
+  const merged = existing.concat((tasks || []).filter(d =>
+    labels.indexOf(d.label) < 0 && removed.indexOf(d.label) < 0 &&
+    !labels.concat(removed).some(l => window.checklistSimilarity(l, d.label) >= 0.8)));
   return normalizeEvent(Object.assign({}, ev, { checklistDef: merged }));
 }
 
