@@ -388,14 +388,14 @@ input[type="time"]{-webkit-appearance:none;}
   position:fixed;z-index:700;
   background:var(--white);border-radius:var(--radius-lg);
   box-shadow:0 8px 32px rgba(0,0,0,.2);
-  width:520px;max-width:92vw;border-top:3px solid var(--gold);
-  display:none;
+  width:520px;max-width:92vw;max-height:calc(100vh - 20px);border-top:3px solid var(--gold);
+  display:none;flex-direction:column;
 }
-#cl-popover.open{display:block;}
+#cl-popover.open{display:flex;}
 .cl-pop-header{padding:14px 18px 10px;border-bottom:1px solid var(--gray-2);display:flex;align-items:center;justify-content:space-between;}
 .cl-pop-title{font-family:'EB Garamond',serif;font-size:17px;color:var(--green);}
 .cl-pop-close{background:none;border:none;cursor:pointer;color:var(--gray-4);font-size:20px;}
-.cl-pop-body{padding:14px 18px 16px;display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;max-height:60vh;overflow-y:auto;}
+.cl-pop-body{padding:14px 18px 16px;display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;flex:1;min-height:0;overflow-y:auto;}
 .cl-pop-row{display:flex;flex-direction:column;gap:5px;background:var(--gray-1);border-radius:var(--radius);padding:9px 11px;}
 .cl-pop-label{font-size:13px;color:var(--text);font-weight:500;}
 .cl-pop-sel{border:1px solid var(--gray-2);border-radius:var(--radius);padding:8px 10px;font-size:14px;font-family:'Noto Sans JP',sans-serif;color:var(--text);background:var(--white);width:100%;}
@@ -449,7 +449,7 @@ input[type="time"]{-webkit-appearance:none;}
   <div id="google-login-error" style="display:none;color:#fff;font-size:12px;max-width:360px;line-height:1.7"></div>
 </div>
 <div id="toast"></div>
-<div id="app-version" style="position:fixed;bottom:6px;right:8px;font-size:9px;color:var(--gray-3);z-index:50;pointer-events:none">v2026.11.01-3</div>
+<div id="app-version" style="position:fixed;bottom:6px;right:8px;font-size:9px;color:var(--gray-3);z-index:50;pointer-events:none">v2026.11.01-4</div>
 
 <div id="loading-overlay" class="hidden">
   <div class="loading-spinner"></div>
@@ -1523,8 +1523,8 @@ function openClPopover(evId,e){
   var rect=e.currentTarget.getBoundingClientRect?e.currentTarget.getBoundingClientRect():{left:e.clientX,top:e.clientY,right:e.clientX};
   var left=e.clientX+10;
   var top=e.clientY+10;
-  if(left+530>window.innerWidth)left=Math.max(10,window.innerWidth-535);
-  if(top+420>window.innerHeight)top=Math.max(10,window.innerHeight-425);
+  if(left+pop.offsetWidth+10>window.innerWidth)left=Math.max(10,window.innerWidth-pop.offsetWidth-10);
+  if(top+pop.offsetHeight+10>window.innerHeight)top=Math.max(10,window.innerHeight-pop.offsetHeight-10);
   pop.style.left=left+'px';pop.style.top=top+'px';
 }
 function onClSelChange(sel,key){
