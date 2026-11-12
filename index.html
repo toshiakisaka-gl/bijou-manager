@@ -1876,7 +1876,7 @@ tr:hover td{background:var(--cream);}
 <script type="module">
 // ===== バージョン情報 =====
 // 新しく書き出す(出力する)たびに、日付を YYYY.MM.DD 形式で更新してください
-const APP_VERSION = 'v2026.10.31-75';
+const APP_VERSION = 'v2026.11.11-76';
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc, onSnapshot, writeBatch, getDoc }
@@ -2247,7 +2247,7 @@ function renderProducts(list) {
     return `
     <div class="product-card${checkedProducts.has(p.id)?' product-checked':''}" id="pc-${p.id}">
       <div class="product-img">
-        ${p.image?`<img src="${p.image}" alt="${p.name}">`:'💍'}
+        ${p.image?`<img ${imgAttr(p.image)} alt="${p.name}" loading="lazy">`:'💍'}
         <button class="product-img-edit" onclick="openEditImage('${p.id}')">📷 変更</button>
       </div>
       ${(!STORE_MODE && totalOrdered>0)?`<div class="ordered-overlay">オーダー済 ${totalOrdered}</div>`:''}
@@ -2394,7 +2394,7 @@ function openEditImage(id) {
   document.getElementById('edit-image-product-id').value=id;
   document.getElementById('edit-image-url').value=p.imageUrl||'';
   document.getElementById('edit-image-preview').innerHTML='';
-  document.getElementById('edit-image-current').innerHTML=p.image?`<img src="${p.image}" style="width:80px;height:80px;object-fit:cover;border-radius:6px;margin-bottom:8px;">`:' <p style="font-size:11px;color:var(--muted);">現在画像なし</p>';
+  document.getElementById('edit-image-current').innerHTML=p.image?`<img ${imgAttr(p.image)} style="width:80px;height:80px;object-fit:cover;border-radius:6px;margin-bottom:8px;">`:' <p style="font-size:11px;color:var(--muted);">現在画像なし</p>';
   document.getElementById('modal-edit-image').classList.add('open');
 }
 window.openEditImage = openEditImage;
@@ -3159,7 +3159,7 @@ function exportPriceList() {
               return `
               <label class="pl-checklist-row" data-search="${(p.name+(p.code||'')).toLowerCase()}" data-material="${p.material||''}" data-category="${p.category||''}" data-locs="${['main','kyoto','dresslave','okinawa'].filter(l=>getStock(p,l)>0).join(' ')}" style="display:flex;align-items:center;gap:8px;font-size:12px;padding:4px 2px;cursor:pointer;">
                 <input type="checkbox" class="pl-checklist-check" value="${p.id}" checked onchange="updatePriceListSelectedCount()">
-                <span style="width:28px;height:28px;border-radius:4px;background:var(--cream-dark);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;">${p.image?`<img src="${p.image}" style="width:100%;height:100%;object-fit:contain;">`:'💍'}</span>
+                <span style="width:28px;height:28px;border-radius:4px;background:var(--cream-dark);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;">${p.image?`<img ${imgAttr(p.image)} style="width:100%;height:100%;object-fit:contain;">`:'💍'}</span>
                 <span style="flex:1;min-width:0;">
                   <div>${p.name}${p.code?' ('+p.code+')':''}</div>
                   <div class="pl-checklist-stockinfo" style="font-size:10px;color:#9A9080;">在庫${totalStock}点${sizeText?' ・ '+sizeText:''}</div>
@@ -3548,7 +3548,7 @@ function exportPriceListPDF(list, cat, mat, layout='list', cols=2, includeStock=
     // ===== リスト表示 =====
     const rows = list.map((p, i) => {
       const img = p.image
-        ? `<img src="${p.image}" style="width:50px;height:50px;object-fit:contain;border-radius:4px;background:#f8f5f0;">`
+        ? `<img ${imgAttr(p.image)} style="width:50px;height:50px;object-fit:contain;border-radius:4px;background:#f8f5f0;">`
         : `<div style="width:50px;height:50px;background:#F0EBE0;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:20px;">💍</div>`;
       const matBadge = p.material ? `<span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:700;${getMaterialStyleInline(p.material)}">${p.material}</span>` : '';
       return `<tr style="background:${i%2===0?'#fff':'#FAF7F2'};">
@@ -3581,7 +3581,7 @@ function exportPriceListPDF(list, cat, mat, layout='list', cols=2, includeStock=
     const textH = (cols <= 2 ? 118 : cols === 3 ? 100 : 88) + (detailKeys.length ? (cols <= 2 ? 32 : cols === 3 ? 44 : 56) : 0);
     const cards = list.map(p => {
       const img = p.image
-        ? `<img src="${p.image}" style="width:100%;height:100%;object-fit:contain;">`
+        ? `<img ${imgAttr(p.image)} style="width:100%;height:100%;object-fit:contain;">`
         : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:${cols<=2?'56px':'36px'};background:#F0EBE0;">💍</div>`;
       const matBadge = p.material ? `<span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:700;${getMaterialStyleInline(p.material)}">${p.material}</span>` : '';
       return `<div style="width:${colW}%;display:inline-block;vertical-align:top;padding:6px;box-sizing:border-box;page-break-inside:avoid;">
@@ -3604,7 +3604,7 @@ function exportPriceListPDF(list, cat, mat, layout='list', cols=2, includeStock=
     const colW = Math.floor(100/cols);
     const cards = list.map(p => {
       const img = p.image
-        ? `<img src="${p.image}" style="width:100%;height:100%;object-fit:contain;">`
+        ? `<img ${imgAttr(p.image)} style="width:100%;height:100%;object-fit:contain;">`
         : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:28px;background:#F0EBE0;">💍</div>`;
       const matBadge = p.material ? `<span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:700;${getMaterialStyleInline(p.material)}">${p.material}</span>` : '';
       const imgSize = cols <= 2 ? '90px' : cols === 3 ? '70px' : '55px';
@@ -3861,7 +3861,7 @@ function openMergePriceList() {
               return `
               <label class="mp-checklist-row" data-search="${(g.baseCode+g.members.map(p=>p.name).join('')).toLowerCase()}" style="display:flex;align-items:center;gap:8px;font-size:12px;padding:4px 2px;cursor:pointer;">
                 <input type="checkbox" class="mp-checklist-check" value="${g.baseCode}" checked onchange="mpUpdateSelectedCount()">
-                <span style="width:28px;height:28px;border-radius:4px;background:var(--cream-dark);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;">${thumbP&&thumbP.image?`<img src="${thumbP.image}" style="width:100%;height:100%;object-fit:contain;">`:'💍'}</span>
+                <span style="width:28px;height:28px;border-radius:4px;background:var(--cream-dark);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;">${thumbP&&thumbP.image?`<img ${imgAttr(thumbP.image)} style="width:100%;height:100%;object-fit:contain;">`:'💍'}</span>
                 <span style="flex:1;min-width:0;">
                   <div>${g.baseCode} <span style="color:#9A9080;">（${g.members.length}金種）</span></div>
                   <div>${matList}</div>
@@ -4112,7 +4112,7 @@ function mpExportSquarePDF(items, cols, detailKeys=[], landscape=false) {
 
   const card = it => {
     const img = it.image
-      ? `<img src="${it.image}" style="width:100%;height:100%;object-fit:contain;">`
+      ? `<img ${imgAttr(it.image)} style="width:100%;height:100%;object-fit:contain;">`
       : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:2.4em;background:#F0EBE0;">💍</div>`;
     const lines = it.prices.map((pr, i) => `
       <div style="display:flex;align-items:baseline;gap:0.2em 0.6em;flex-wrap:wrap;padding:0.25em 0;${i>0?'border-top:1px solid #EFE4CC;':''}">
@@ -4197,7 +4197,7 @@ function mpExportTagPDF(items, cols, detailKeys=[], landscape=false, horizontal=
   const priceBlockH = maxPriceLines * perLineH;
   const cards = items.map(it => {
     const img = it.image
-      ? `<img src="${it.image}" style="width:100%;height:100%;object-fit:contain;">`
+      ? `<img ${imgAttr(it.image)} style="width:100%;height:100%;object-fit:contain;">`
       : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:${tier===1?'56px':'36px'};background:#F0EBE0;">💍</div>`;
     const priceLines = detailKeys.length
       ? it.prices.map((pr, i) => `
@@ -4246,7 +4246,7 @@ function mpExportListPDF(items, detailKeys=[]) {
   const gothic = "font-family:'Noto Sans JP','Hiragino Kaku Gothic Pro','Meiryo',sans-serif;";
   const rows = items.map((it, i) => {
     const img = it.image
-      ? `<img src="${it.image}" style="width:50px;height:50px;object-fit:contain;border-radius:4px;background:#f8f5f0;">`
+      ? `<img ${imgAttr(it.image)} style="width:50px;height:50px;object-fit:contain;border-radius:4px;background:#f8f5f0;">`
       : `<div style="width:50px;height:50px;background:#F0EBE0;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:20px;">💍</div>`;
     // 社内用の項目を載せるときは、金種ごとに1行（入りきらなければ2行）にして、金種の間に線を入れる
     const priceBadges = detailKeys.length ? it.prices.map((pr, i) => `
@@ -5095,7 +5095,7 @@ function renderInventory(q) {
     return `<tr>
       <td><div style="display:flex;align-items:center;gap:8px;">
         <div style="width:32px;height:32px;border-radius:4px;background:var(--cream-dark);overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:16px;">
-          ${p.image?`<img src="${p.image}" style="width:100%;height:100%;object-fit:contain;background:var(--cream-dark);">`:'💍'}</div>
+          ${p.image?`<img ${imgAttr(p.image)} style="width:100%;height:100%;object-fit:contain;background:var(--cream-dark);">`:'💍'}</div>
         <div><div style="font-family:'Cormorant Garamond',serif;font-size:14px;">${p.name}</div>
           ${p.price?`<div style="font-size:10px;color:var(--muted);">${fmt(p.price)} <span style="color:var(--gold-dark);">税込 ${fmt(Math.round(p.price*1.1))}</span></div>`:''}
           ${p.memo?`<div style="font-size:10px;color:var(--muted);">${p.memo}</div>`:''}</div></div></td>
@@ -5468,7 +5468,7 @@ function renderOrderProducts(q) {
   container.innerHTML=list.map(p=>{
     const inOrder=orderItems.find(o=>o.id===p.id);
     const imgHTML = p.image
-      ? `<img src="${p.image}" alt="${p.name}" style="width:100%;height:100%;object-fit:contain;display:block;background:var(--cream-dark);">`
+      ? `<img ${imgAttr(p.image)} alt="${p.name}" style="width:100%;height:100%;object-fit:contain;display:block;background:var(--cream-dark);">`
       : `<span style="font-size:32px;">💍</span>`;
     return `<div class="product-card ${inOrder?'selected':''}" onclick="toggleOrderProduct('${p.id}')" style="cursor:pointer;">
       <div class="product-img" style="height:90px;overflow:hidden;">${imgHTML}</div>
@@ -5562,7 +5562,7 @@ function renderOrderItems() {
 
     return `
     <div class="order-item">
-      <div class="order-item-img">${item.image?`<img src="${item.image}" alt="">`:'💍'}</div>
+      <div class="order-item-img">${item.image?`<img ${imgAttr(item.image)} alt="">`:'💍'}</div>
       <div class="order-item-detail">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
           <div>
@@ -5893,7 +5893,7 @@ function buildPdfHTML() {
     const gothic="font-family:'Noto Sans JP','Hiragino Kaku Gothic Pro','Meiryo',sans-serif;";
     const imgSrc = item._pdfImage || item.image;
     const imgCell=imgSrc
-      ? `<td style="padding:5px 10px;border-bottom:1px solid #f0ebe0;"><img src="${imgSrc}" style="width:42px;height:42px;object-fit:contain;border-radius:4px;background:#f0ebe0;"></td>`
+      ? `<td style="padding:5px 10px;border-bottom:1px solid #f0ebe0;"><img ${imgAttr(imgSrc)} style="width:42px;height:42px;object-fit:contain;border-radius:4px;background:#f0ebe0;"></td>`
       : `<td style="padding:5px 10px;border-bottom:1px solid #f0ebe0;"><div style="width:42px;height:42px;background:#F0EBE0;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:18px;">💍</div></td>`;
     let tds=imgCell+`<td style="padding:9px 11px;border-bottom:1px solid #f0ebe0;font-family:'Cormorant Garamond',serif;font-size:${nameFontSize}px;">${item.name}</td>`;
     if(showCode)tds+=`<td style="padding:9px 11px;border-bottom:1px solid #f0ebe0;font-size:${fontSize}px;${gothic}color:#606060;">${item.code||'—'}</td>`;
@@ -6029,7 +6029,7 @@ function showPdfConfirmModal() {
     ).join('');
     return `<div style="padding:10px 12px;border-bottom:1px solid var(--cream-dark);display:flex;align-items:flex-start;gap:12px;">
       <div style="width:40px;height:40px;border-radius:6px;background:var(--cream-dark);overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:18px;">
-        ${item.image?`<img src="${item.image}" style="width:100%;height:100%;object-fit:contain;">`:'💍'}
+        ${item.image?`<img ${imgAttr(item.image)} style="width:100%;height:100%;object-fit:contain;">`:'💍'}
       </div>
       <div style="flex:1;">
         <div style="font-size:13px;font-weight:500;">${item.name} <span style="font-size:10px;color:var(--muted);">${item.code||''}</span> ${materialBadge(item.material)}</div>
@@ -8425,7 +8425,7 @@ function previewHistoryOrder(hId) {
     const bg = idx % 2 === 0 ? '#ffffff' : '#FAF7F2';
     const matStyle = getMaterialStyle(item.material);
     const imgCell = item.image
-      ? `<td style="padding:5px 10px;border-bottom:1px solid #f0ebe0;"><img src="${item.image}" style="width:42px;height:42px;object-fit:contain;border-radius:4px;background:#f0ebe0;"></td>`
+      ? `<td style="padding:5px 10px;border-bottom:1px solid #f0ebe0;"><img ${imgAttr(item.image)} style="width:42px;height:42px;object-fit:contain;border-radius:4px;background:#f0ebe0;"></td>`
       : `<td style="padding:5px 10px;border-bottom:1px solid #f0ebe0;"><div style="width:42px;height:42px;background:#F0EBE0;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:18px;">💍</div></td>`;
     rows += `<tr style="background:${bg};">${imgCell}
       <td style="padding:9px 11px;border-bottom:1px solid #f0ebe0;font-family:'Cormorant Garamond',serif;font-size:${nameFontSize}px;">${item.name}</td>
@@ -9091,7 +9091,7 @@ function openSoldModal(id) {
 
   // 型番の打ち間違い・似た型番の取り違えに気づけるよう、写真を大きめに表示する
   const soldImgHTML = p.image
-    ? `<img src="${p.image}" style="width:64px;height:64px;object-fit:contain;border-radius:6px;background:white;flex-shrink:0;">`
+    ? `<img ${imgAttr(p.image)} style="width:64px;height:64px;object-fit:contain;border-radius:6px;background:white;flex-shrink:0;">`
     : `<div style="width:64px;height:64px;border-radius:6px;background:#F0EBE0;display:flex;align-items:center;justify-content:center;font-size:26px;flex-shrink:0;">💍</div>`;
   document.getElementById('sold-product-info').innerHTML =
     `<div style="display:flex;gap:12px;align-items:center;">
@@ -9412,7 +9412,7 @@ function renderCustomerOrders() {
     return `<div class="card" style="margin-bottom:10px;${notDelivered?'border:2px solid '+(dueBg?dueBg:'var(--gold)')+';':''}${o.status==='お渡し済み'?'opacity:0.6;':''}">
       <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap;">
         <div style="width:54px;height:54px;border-radius:8px;background:var(--cream-dark);overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:22px;">
-          ${o.image?`<img src="${o.image}" style="width:100%;height:100%;object-fit:contain;">`:'💍'}
+          ${o.image?`<img ${imgAttr(o.image)} style="width:100%;height:100%;object-fit:contain;">`:'💍'}
         </div>
         <div style="flex:1;min-width:200px;">
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
@@ -9931,7 +9931,7 @@ function renderReorderList() {
   itemsEl.innerHTML = reorderList.map((r, idx) => `
     <div onclick="showReorderDetail('${r.productId}')" style="background:white;border:1px solid #A8C8E0;border-radius:8px;padding:8px 12px;display:flex;align-items:center;gap:10px;min-width:180px;cursor:pointer;transition:box-shadow .15s;" onmouseover="this.style.boxShadow='0 4px 12px rgba(0,0,0,0.12)'" onmouseout="this.style.boxShadow=''">
       <div style="width:32px;height:32px;border-radius:4px;background:var(--cream-dark);overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:14px;">
-        ${r.image?`<img src="${r.image}" style="width:100%;height:100%;object-fit:contain;">`:'💍'}
+        ${r.image?`<img ${imgAttr(r.image)} style="width:100%;height:100%;object-fit:contain;">`:'💍'}
       </div>
       <div style="flex:1;min-width:0;">
         <div style="font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${r.name}</div>
@@ -9992,7 +9992,7 @@ function showReorderDetail(productId) {
   document.getElementById('reorder-detail-body').innerHTML = `
     <div style="display:flex;gap:16px;align-items:flex-start;margin-bottom:16px;">
       <div style="width:80px;height:80px;border-radius:8px;background:var(--cream-dark);overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:32px;">
-        ${p.image?`<img src="${p.image}" style="width:100%;height:100%;object-fit:contain;">`:'💍'}
+        ${p.image?`<img ${imgAttr(p.image)} style="width:100%;height:100%;object-fit:contain;">`:'💍'}
       </div>
       <div>
         <div style="font-family:'Cormorant Garamond',serif;font-size:20px;">${p.name}</div>
@@ -10094,6 +10094,25 @@ function togglePasswordVisibility() {
 window.togglePasswordVisibility = togglePasswordVisibility;
 
 // ===== Google Drive URL 自動変換 =====
+// 画像の読み込み先（v2026.11.11-76）：true＝速い入り口（lh3.googleusercontent.com）、
+// 出なかったら自動で前の入り口（drive.google.com/thumbnail）で読み直す。
+// false にすると前と同じ読み込み方に戻る。保存されている画像URLは変えていない。
+const USE_FAST_IMG = true;
+function driveImgId(url) {
+  if (!url || typeof url !== 'string' || url.startsWith('data:')) return null;
+  if (!/drive\.google\.com|googleusercontent\.com/.test(url)) return null;
+  const m = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/)
+    || url.match(/googleusercontent\.com\/d\/([a-zA-Z0-9_-]+)/)
+    || url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  return m ? m[1] : null;
+}
+function imgAttr(url) {
+  const id = USE_FAST_IMG ? driveImgId(url) : null;
+  if (!id) return `src="${url}"`;
+  const fallback = `https://drive.google.com/thumbnail?id=${id}&sz=w400`;
+  return `src="https://lh3.googleusercontent.com/d/${id}=w400" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${fallback}'"`;
+}
+window.imgAttr = imgAttr;
 function convertGoogleDriveUrl(url) {
   if (!url) return url;
   url = url.trim();

@@ -153,9 +153,23 @@ function matches(p, stone) {
   return true;
 }
 
+// 画像の読み込み先（2026/11/11）：true＝速い入り口（lh3.googleusercontent.com）、
+// 出なかったら前の入り口（保存されているURL）で読み直し、それでもだめなら 💍。
+// false にすると前と同じ読み込み方に戻る。
+const USE_FAST_IMG = true;
+function driveImgId(url) {
+  if (!/drive\.google\.com|googleusercontent\.com/.test(url)) return null;
+  const m = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/)
+    || url.match(/googleusercontent\.com\/d\/([a-zA-Z0-9_-]+)/)
+    || url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  return m ? m[1] : null;
+}
 function photoOf(g) {
   const photo = g.members.find(p => /^https?:\/\//.test(p.imageUrl || ''));
-  return photo ? `<img src="${esc(photo.imageUrl)}" alt="${esc(g.name)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.textContent='💍'">` : '💍';
+  if (!photo) return '💍';
+  const id = USE_FAST_IMG ? driveImgId(photo.imageUrl) : null;
+  const src = id ? `https://lh3.googleusercontent.com/d/${id}=w400` : photo.imageUrl;
+  return `<img src="${esc(src)}" data-fallback="${id ? esc(photo.imageUrl) : ''}" alt="${esc(g.name)}" loading="lazy" referrerpolicy="no-referrer" onerror="if(this.dataset.fallback){this.src=this.dataset.fallback;this.dataset.fallback='';}else{this.parentNode.textContent='💍';}">`;
 }
 
 function card(g) {
