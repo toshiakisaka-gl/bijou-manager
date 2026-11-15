@@ -693,6 +693,24 @@ tr:hover td{background:var(--cream);}
     </div>
   </div>
 
+  <!-- お客様オーダーの重なりチェック（v2026.11.15-77） -->
+  <div style="margin-bottom:20px;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;cursor:pointer;" onclick="toggleDupOrderCheck()">
+      <span id="dupcheck-toggle-icon" style="font-size:11px;color:var(--muted);transition:transform 0.2s;display:inline-block;">▶</span>
+      <h2 style="font-size:14px;font-weight:600;">🔁 お客様オーダーの重なりチェック</h2>
+    </div>
+    <div id="dupcheck-panel" style="display:none;">
+      <p style="font-size:11px;color:var(--muted);margin-bottom:10px;">v2026.11.15-77 より前は、販売ボタンの「オーダー販売」のあと、要発注リストからオーダー表を確定すると、同じお客様オーダーがもう1件でき、「オーダー中」も2回足されていました。①重なっているお客様オーダー ②消えてしまったかもしれないお客様オーダー ③多すぎるかもしれない「オーダー中」の数 を出します。どれも、ボタンを押すまでは何も変わりません。</p>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap;">
+        <label style="font-size:12px;">②は、この日数さかのぼって調べる:</label>
+        <input type="number" id="dupcheck-days" class="form-control" value="120" min="1" style="font-size:12px;width:80px;">
+        <span style="font-size:12px;">日</span>
+        <button class="btn btn-gold btn-sm" onclick="runDupOrderCheck()">チェックする</button>
+      </div>
+      <div id="dupcheck-result"></div>
+    </div>
+  </div>
+
   <!-- 売上データの整合性チェック -->
   <div style="margin-bottom:20px;">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;cursor:pointer;" onclick="toggleSalesCheck()">
@@ -1876,7 +1894,7 @@ tr:hover td{background:var(--cream);}
 <script type="module">
 // ===== バージョン情報 =====
 // 新しく書き出す(出力する)たびに、日付を YYYY.MM.DD 形式で更新してください
-const APP_VERSION = 'v2026.11.11-76';
+const APP_VERSION = 'v2026.11.15-77';
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc, onSnapshot, writeBatch, getDoc }
@@ -6044,6 +6062,20 @@ function showPdfConfirmModal() {
 }
 window.showPdfConfirmModal = showPdfConfirmModal;
 
+// オーダー表の1商品のうち、オーダー販売のときにまだ記録されていない数だけを返す（v2026.11.15-77）
+// 販売ボタンの「オーダー販売」で、お客様オーダーとオーダー中はもう記録されているので、
+// 要発注リスト経由でオーダー表に入った分（saleCounted）は差し引く。
+function orderExtraSizes(item) {
+  const out = {};
+  const counted = item.saleCounted || {};
+  Object.entries(item.sizes || {}).forEach(([s, v]) => {
+    const extra = (parseFloat(v) || 0) - (parseFloat(counted[s]) || 0);
+    if (extra > 0) out[s] = extra;
+  });
+  return out;
+}
+window.orderExtraSizes = orderExtraSizes;
+
 // 確定ボタン：オーダー済みに追加して履歴保存
 // お客様オーダーページ（customerOrders）に1件登録する共通処理。
 // オーダー表確定・販売登録（オーダー販売）など、複数の場所から同じ形で呼び出すことで、
@@ -6149,7 +6181,9 @@ async function confirmOrderAndAddStock() {
       if (!p.ordered) p.ordered = {};
       if (!p.orderedLog) p.orderedLog = [];
       const isCustomerOrder = item.orderType === 'customer';
-      Object.entries(item.sizes||{}).forEach(([s,v]) => {
+      const extraSizes = orderExtraSizes(item);
+      if (!Object.keys(extraSizes).length) continue; // 全部オーダー販売で記録済み
+      Object.entries(extraSizes).forEach(([s,v]) => {
         const qty = parseFloat(v) || 0;
         if (qty > 0) {
           // 文字列キーで統一して保存（カスタムサイズも含む）
@@ -6175,7 +6209,7 @@ async function confirmOrderAndAddStock() {
     if (item.orderType !== 'customer') continue;
     addCustomerOrderEntry({
       productId: item.id, productName: item.name, code: item.code, material: item.material,
-      image: item.image, sizes: item.sizes, customerName: item.customerName,
+      image: item.image, sizes: orderExtraSizes(item), customerName: item.customerName,
       orderLocation: item.customerLocation, orderDate, dueDate: item.dueDate,
       note: item.note, internalMemo: item.internalMemo
     });
@@ -7556,24 +7590,219 @@ async function backfillOrderedDates() {
 }
 window.backfillOrderedDates = backfillOrderedDates;
 
+// ===== お客様オーダーの重なりチェック（v2026.11.15-77） =====
+function toggleDupOrderCheck() {
+  const panel = document.getElementById('dupcheck-panel');
+  const icon = document.getElementById('dupcheck-toggle-icon');
+  const open = panel.style.display !== 'none';
+  panel.style.display = open ? 'none' : 'block';
+  icon.style.transform = open ? '' : 'rotate(90deg)';
+}
+window.toggleDupOrderCheck = toggleDupOrderCheck;
+
+function _dupNormName(n) { return String(n || '').replace(/[\s　]/g, '').replace(/様$/, ''); }
+const _DUP_ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+function _dupEsc(v) { return String(v ?? '').replace(/[&<>"']/g, c => _DUP_ESC_MAP[c]); }
+
+function runDupOrderCheck() {
+  const el = document.getElementById('dupcheck-result');
+  if (!el) return;
+  const days = parseInt(document.getElementById('dupcheck-days')?.value) || 120;
+  const from = new Date(Date.now() - days * 86400000).toISOString().slice(0,10);
+  let html = '';
+
+  // ① 重なっているお客様オーダー（お渡し済みは除く）
+  const groups = {};
+  customerOrders.filter(o => o.status !== 'お渡し済み').forEach(o => {
+    const sizesKey = Object.entries(o.sizes || {}).filter(([,v]) => (parseFloat(v)||0) > 0)
+      .map(([k,v]) => `${k}:${v}`).sort().join(',');
+    const key = `${o.productId}|${sizesKey}|${_dupNormName(o.customerName)}`;
+    (groups[key] = groups[key] || []).push(o);
+  });
+  const dupGroups = Object.values(groups).filter(g => g.length > 1);
+  html += `<h3 style="font-size:13px;margin:10px 0 6px;">① 重なっているお客様オーダー：${dupGroups.length ? dupGroups.length + '組' : 'なし ✅'}</h3>`;
+  if (dupGroups.length) {
+    html += `<p style="font-size:11px;color:var(--muted);margin-bottom:6px;">同じお客様・同じ商品・同じサイズのものです。1件だけ残して、ほかを消してください（どれを残しても中身は同じです）。消しても在庫・オーダー中の数は変わりません。</p>`;
+    dupGroups.forEach(g => {
+      g.sort((a,b) => String(a.orderDate).localeCompare(String(b.orderDate)));
+      const o0 = g[0];
+      const sizesTxt = Object.entries(o0.sizes||{}).map(([k,v]) => `${k}号×${v}`).join('、');
+      html += `<div style="border:1px solid var(--cream-dark);border-radius:6px;padding:8px 10px;margin-bottom:6px;font-size:12px;">
+        <div style="font-weight:600;margin-bottom:4px;">${_dupEsc(o0.productName)} ${_dupEsc(o0.code)} / ${_dupEsc(sizesTxt)} / ${_dupEsc(o0.customerName) || '（お名前なし）'}</div>
+        ${g.map(o => `<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;border-top:1px dashed var(--cream-dark);padding-top:4px;margin-top:4px;">
+          <span>オーダー日 ${_dupEsc(o.orderDate)}・${_dupEsc(o.orderLocation) || '受付なし'}・${_dupEsc(o.status)}${o.note ? '・<span style="color:#C25C5C;">' + _dupEsc(o.note) + '</span>（オーダー表から）' : '（販売から）'}</span>
+          <button class="btn btn-danger btn-sm" style="font-size:10px;" onclick="dupDeleteCustomerOrder('${o.id}')">これを消す</button>
+        </div>`).join('')}
+      </div>`;
+    });
+  }
+
+  // ② 消えてしまったかもしれないお客様オーダー
+  const sales = history.filter(h => h.type === 'sale' && !h.cancelled && String(h.salesType||'').includes('オーダー') && String(h.date||'') >= from);
+  const used = new Set();
+  const missing = [];
+  sales.forEach(h => {
+    const p = products.find(x => x.code === h.code && (x.material||'') === (h.material||''))
+      || products.find(x => x.code === h.code && x.name === h.product);
+    const hit = customerOrders.find(o => !used.has(o.id)
+      && ((p && o.productId === p.id) || (o.code && o.code === h.code && (o.material||'') === (h.material||'')))
+      && (parseFloat(o.sizes?.[h.size]) || 0) > 0
+      && _dupNormName(o.customerName) === _dupNormName(h.customerName));
+    if (hit) used.add(hit.id);
+    else missing.push({ h, p });
+  });
+  window._dupMissing = missing;
+  html += `<h3 style="font-size:13px;margin:16px 0 6px;">② 消えてしまったかもしれないお客様オーダー（${days}日以内のオーダー販売）：${missing.length ? missing.length + '件' : 'なし ✅'}</h3>`;
+  if (missing.length) {
+    html += `<p style="font-size:11px;color:var(--muted);margin-bottom:6px;">オーダー販売の記録はあるのに、お客様オーダーが見つからないものです。お渡しが済んで自分で消したものも出ます。まだ制作中なら「戻す」を押してください（在庫・オーダー中の数は変わりません）。</p>`;
+    missing.forEach(({h, p}, i) => {
+      html += `<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;border:1px solid var(--cream-dark);border-radius:6px;padding:8px 10px;margin-bottom:6px;font-size:12px;">
+        <span>${_dupEsc(h.date)}・${_dupEsc(h.product)} ${_dupEsc(h.code)} ${_dupEsc(h.material)} / ${_dupEsc(h.size)}号×${_dupEsc(h.qty)} / ${_dupEsc(h.customerName) || '（お名前なし）'}・${_dupEsc(h.saleLocation || h.location)}</span>
+        ${p ? `<button class="btn btn-outline btn-sm" style="font-size:10px;color:#2E7BB5;border-color:#2E7BB5;" onclick="restoreCustomerOrderFromSale(${i})">お客様オーダーに戻す</button>` : '<span style="color:var(--muted);font-size:11px;">商品が見つかりません</span>'}
+      </div>`;
+    });
+  }
+
+  // ③ 多すぎるかもしれない「オーダー中」
+  const dbl = {};
+  history.filter(h => h.type === 'order' && !h.cancelled).forEach(h => {
+    (h.items || []).forEach(item => {
+      if (item.orderType !== 'customer' || item.source !== 'customer' || item.saleCounted) return;
+      if (item.addToOrdered === false) return;
+      Object.entries(item.sizes || {}).forEach(([s, v]) => {
+        const q = parseFloat(v) || 0;
+        if (q <= 0) return;
+        const k = `${item.id}|${s}`;
+        dbl[k] = (dbl[k] || 0) + q;
+      });
+    });
+  });
+  const overRows = [];
+  Object.entries(dbl).forEach(([k, q]) => {
+    const cut = k.lastIndexOf('|');
+    const pid = k.slice(0, cut), size = k.slice(cut + 1);
+    const p = products.find(x => x.id === pid);
+    if (!p) return;
+    const fixed = parseFloat(p.orderedDupFixed?.[size]) || 0;
+    const cur = parseFloat(p.ordered?.[size]) || 0;
+    const suspect = q - fixed;
+    if (suspect <= 0 || cur <= 0) return;
+    const activeCO = customerOrders.filter(o => o.productId === pid && o.status !== 'お渡し済み')
+      .reduce((a, o) => a + (parseFloat(o.sizes?.[size]) || 0), 0);
+    overRows.push({ p, size, cur, suspect, activeCO, suggest: Math.min(suspect, cur) });
+  });
+  window._dupOverRows = overRows;
+  html += `<h3 style="font-size:13px;margin:16px 0 6px;">③ 多すぎるかもしれない「オーダー中」の数：${overRows.length ? overRows.length + '件' : 'なし ✅'}</h3>`;
+  if (overRows.length) {
+    html += `<p style="font-size:11px;color:var(--muted);margin-bottom:6px;">オーダー販売のあとにオーダー表を確定して、2回足された可能性がある数です。工場に頼んでまだ届いていない本当の数と比べて、減らす数を決めてください（お渡し済みにしたときに、すでに自然に減っている場合もあります）。</p>`;
+    overRows.forEach((r, i) => {
+      html += `<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;border:1px solid var(--cream-dark);border-radius:6px;padding:8px 10px;margin-bottom:6px;font-size:12px;">
+        <span>${_dupEsc(r.p.code)} ${_dupEsc(r.p.name)} ${_dupEsc(r.p.material)} / ${_dupEsc(r.size)}号 — 今のオーダー中: ${r.cur}点・制作中などのお客様オーダー: ${r.activeCO}点・<strong style="color:#C25C5C;">2回足された可能性: ${r.suspect}点</strong></span>
+        <span style="display:flex;align-items:center;gap:6px;white-space:nowrap;">
+          <input type="number" id="dupfix-qty-${i}" class="form-control" value="${r.suggest}" min="0" max="${r.cur}" style="font-size:12px;width:64px;">
+          <button class="btn btn-danger btn-sm" style="font-size:10px;" onclick="reduceOrderedDup(${i})">点 オーダー中を減らす</button>
+          <button class="btn btn-outline btn-sm" style="font-size:10px;" onclick="markOrderedDupOk(${i})">数は合っている</button>
+        </span>
+      </div>`;
+    });
+  }
+
+  el.innerHTML = html;
+}
+window.runDupOrderCheck = runDupOrderCheck;
+
+async function dupDeleteCustomerOrder(id) {
+  const o = customerOrders.find(x => x.id === id);
+  if (!o) return;
+  if (!confirm(`${o.productName} ${o.code}（${o.customerName || 'お名前なし'}・オーダー日 ${o.orderDate}）のお客様オーダーを消しますか？\n在庫・オーダー中の数は変わりません。`)) return;
+  customerOrders = customerOrders.filter(x => x.id !== id);
+  await saveCustomerOrdersDB();
+  renderCustomerOrders();
+  toast('重なっていたお客様オーダーを消しました', 'success');
+  runDupOrderCheck();
+}
+window.dupDeleteCustomerOrder = dupDeleteCustomerOrder;
+
+async function restoreCustomerOrderFromSale(i) {
+  const m = (window._dupMissing || [])[i];
+  if (!m || !m.p) return;
+  const { h, p } = m;
+  if (!confirm(`${h.product} ${h.code} ${h.size}号（${h.customerName || 'お名前なし'}）を、お客様オーダーに戻しますか？\n在庫・オーダー中の数は変わりません。納品予定日はあとで入れてください。`)) return;
+  const entry = addCustomerOrderEntry({
+    productId: p.id, productName: p.name, code: p.code, material: p.material, image: p.image,
+    sizes: { [String(h.size)]: parseFloat(h.qty) || 1 }, customerName: h.customerName || '',
+    orderLocation: h.saleLocation || '', orderDate: h.date, internalMemo: h.internalMemo || ''
+  });
+  if (!entry) { toast('戻せませんでした', 'error'); return; }
+  await saveCustomerOrdersDB();
+  renderCustomerOrders();
+  toast('お客様オーダーに戻しました', 'success');
+  runDupOrderCheck();
+}
+window.restoreCustomerOrderFromSale = restoreCustomerOrderFromSale;
+
+async function reduceOrderedDup(i) {
+  const r = (window._dupOverRows || [])[i];
+  if (!r) return;
+  const p = products.find(x => x.id === r.p.id);
+  if (!p) return;
+  const key = String(r.size);
+  const cur = parseFloat(p.ordered?.[key]) || 0;
+  const n = Math.min(cur, Math.max(0, parseInt(document.getElementById(`dupfix-qty-${i}`)?.value) || 0));
+  if (n <= 0) { toast('減らす数を入れてください', 'error'); return; }
+  if (!confirm(`${p.code} ${p.name} ${key}号の「オーダー中」を ${cur} → ${cur - n} にしますか？\n（実在庫には影響しません）`)) return;
+  p.ordered[key] = cur - n;
+  if (!p.ordered[key]) delete p.ordered[key];
+  if (p.orderedForCustomer && p.orderedForCustomer[key]) {
+    p.orderedForCustomer[key] = Math.min(parseFloat(p.orderedForCustomer[key]) || 0, parseFloat(p.ordered?.[key]) || 0);
+    if (!p.orderedForCustomer[key]) delete p.orderedForCustomer[key];
+  }
+  // 次のチェックで同じ分をもう一度出さないように、直した数を覚えておく
+  if (!p.orderedDupFixed) p.orderedDupFixed = {};
+  p.orderedDupFixed[key] = (parseFloat(p.orderedDupFixed[key]) || 0) + n;
+  await saveProductDB(p);
+  renderProducts(); renderInventory();
+  if (typeof renderPendingOrders === 'function') renderPendingOrders();
+  toast('オーダー中を減らしました', 'success');
+  runDupOrderCheck();
+}
+window.reduceOrderedDup = reduceOrderedDup;
+
+// 「オーダー中の数は合っている」→ 数は変えずに、この分を次から出さない
+async function markOrderedDupOk(i) {
+  const r = (window._dupOverRows || [])[i];
+  if (!r) return;
+  const p = products.find(x => x.id === r.p.id);
+  if (!p) return;
+  const key = String(r.size);
+  if (!confirm(`${p.code} ${p.name} ${key}号の「オーダー中」（${parseFloat(p.ordered?.[key]) || 0}点）は合っているので、このチェックに出さないようにしますか？\n（数は変わりません）`)) return;
+  if (!p.orderedDupFixed) p.orderedDupFixed = {};
+  p.orderedDupFixed[key] = (parseFloat(p.orderedDupFixed[key]) || 0) + r.suspect;
+  await saveProductDB(p);
+  toast('このチェックに出さないようにしました', 'success');
+  runDupOrderCheck();
+}
+window.markOrderedDupOk = markOrderedDupOk;
+
 // ===== オーダー表 突き合わせ確認 =====
 let reconcileChecked = new Set();
 
 // 履歴ページの4つの整合性チェックを、まとめて開いてざっと確認できるようにする「健康診断」ショートカット
 function openHealthDashboard() {
   showPanel('history');
-  ['reconcile-panel','stale-panel','custcheck-panel','salescheck-panel'].forEach(id => {
+  ['reconcile-panel','stale-panel','custcheck-panel','dupcheck-panel','salescheck-panel'].forEach(id => {
     const panel = document.getElementById(id);
     if (panel) panel.style.display = 'block';
   });
-  ['reconcile-toggle-icon','stale-toggle-icon','custcheck-toggle-icon','salescheck-toggle-icon'].forEach(id => {
+  ['reconcile-toggle-icon','stale-toggle-icon','custcheck-toggle-icon','dupcheck-toggle-icon','salescheck-toggle-icon'].forEach(id => {
     const icon = document.getElementById(id);
     if (icon) icon.style.transform = 'rotate(90deg)';
   });
   // 日付や選択が不要なものは、自動で実行しておく
   if (typeof runCustOrderedCheck === 'function') runCustOrderedCheck();
   if (typeof runSalesIntegrityCheck === 'function') runSalesIntegrityCheck();
-  toast('4つのチェックをまとめて開きました（基準日チェックとオーダー表突き合わせは、それぞれ条件を入力してから「チェックする」を押してください）', 'success');
+  if (typeof runDupOrderCheck === 'function') runDupOrderCheck();
+  toast('5つのチェックをまとめて開きました（基準日チェックとオーダー表突き合わせは、それぞれ条件を入力してから「チェックする」を押してください）', 'success');
 }
 window.openHealthDashboard = openHealthDashboard;
 
@@ -8611,7 +8840,8 @@ async function cancelOrder(hId) {
     const p = products.find(x => x.id === item.id);
     if (!p) continue;
     if (!p.ordered) p.ordered = {};
-    Object.entries(item.sizes || {}).forEach(([s, v]) => {
+    // オーダー販売で記録済みの分は、確定のときに足していないので引かない（v2026.11.15-77）
+    Object.entries(orderExtraSizes(item)).forEach(([s, v]) => {
       if (v > 0) {
         p.ordered[s] = Math.max(0, (p.ordered[s] || 0) - (parseInt(v) || 0));
       }
@@ -8651,7 +8881,7 @@ async function removeCustomerOrdersByHistoryEntry(h) {
   if (!h || h.type !== 'order' || !h.items) return;
   const before = customerOrders.length;
   const targetCodes = new Set(
-    (h.items||[]).filter(i => i.orderType === 'customer').map(i => `${i.id}|${h.date}`)
+    (h.items||[]).filter(i => i.orderType === 'customer' && Object.keys(orderExtraSizes(i)).length).map(i => `${i.id}|${h.date}`)
   );
   if (!targetCodes.size) return;
   customerOrders = customerOrders.filter(o => !targetCodes.has(`${o.productId}|${o.orderDate}`));
@@ -10050,6 +10280,10 @@ function applyReorderList() {
     const existing = orderItems.find(o => o.id === r.productId && (o.source||null) === (r.source||null));
     if (existing) {
       existing.sizes[r.size] = (existing.sizes[r.size] || 0) + r.qty;
+      if (r.source === 'customer') {
+        if (!existing.saleCounted) existing.saleCounted = {};
+        existing.saleCounted[r.size] = (existing.saleCounted[r.size] || 0) + r.qty;
+      }
       if (r.customerName && !existing.customerName) existing.customerName = r.customerName;
       if (r.customerLocation && !existing.customerLocation) existing.customerLocation = r.customerLocation;
       if (r.dueDate && !existing.dueDate) existing.dueDate = r.dueDate;
@@ -10075,6 +10309,9 @@ function applyReorderList() {
         customerName: r.customerName || '', customerLocation: r.customerLocation || '', dueDate: r.dueDate || '',
         internalMemo: r.memo || '', // 現場メモ（工場には見せない・内部管理用）
         source: r.source || null,
+        // オーダー販売のときに、お客様オーダー・オーダー中へ記録済みの数（v2026.11.15-77）
+        // オーダー表を確定しても、この分はもう一度記録しない（重複を防ぐ）
+        saleCounted: isCustomerSrc ? { [r.size]: r.qty } : undefined,
         addToOrdered: true
       };
       orderItems.push(newItem);
