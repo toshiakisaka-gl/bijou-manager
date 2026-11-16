@@ -1894,7 +1894,7 @@ tr:hover td{background:var(--cream);}
 <script type="module">
 // ===== バージョン情報 =====
 // 新しく書き出す(出力する)たびに、日付を YYYY.MM.DD 形式で更新してください
-const APP_VERSION = 'v2026.11.15-77';
+const APP_VERSION = 'v2026.11.16-78';
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc, onSnapshot, writeBatch, getDoc }
@@ -7196,6 +7196,7 @@ window.togglePendingOrders = togglePendingOrders;
 // ===== 納品書データ連携（saka-delivery-reader） =====
 let deliverySlips = [];       // {slipKey, slip_no, date, subject, rows:[...]}
 let importedSlipKeys = new Set();
+let manualSlipKeys = new Set();   // 在庫は変えずに「手で入れた分」として済みにした伝票（v2026.11.16-78）
 let diCheckedSlips = new Set();
 let diGroups = [];            // ステップ2用：商品×号数ごとのグループ
 let diLoaded = false;
@@ -7251,7 +7252,11 @@ async function renderDeliveryImportHistory() {
         <span style="font-size:10px;color:var(--muted);">取り込み日時: ${dt} <span id="di-hist-arrow-${i}">▶</span></span>
       </div>
       <div id="di-hist-detail-${i}" style="display:none;margin-top:8px;font-size:11px;">
-        ${(imp.groups||[]).map(g => `
+        ${imp.manual ? `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:4px 0;color:var(--muted);">
+          <span>✋ 手で入れた分として済みにしました（在庫は変えていません）</span>
+          <button class="btn btn-outline btn-sm" style="font-size:10px;" onclick="event.stopPropagation();diUndoManualDone('${imp.id}')">取り消す</button>
+        </div>` : ''}
+        ${imp.manual ? '' : (imp.groups||[]).map(g => `
           <div style="display:flex;justify-content:space-between;padding:4px 0;border-top:1px solid var(--cream-dark);">
             <span>${g.code}${g.productName?' — '+g.productName:''} / ${g.size}号 × ${g.qty}</span>
             <span style="color:var(--muted);">${g.action==='customer' ? '👤 お客様へ直接納品' : '📦 '+(LOCATIONS[g.location]||g.location)}</span>
@@ -7277,6 +7282,7 @@ window.diToggleHistoryDetail = diToggleHistoryDetail;
 async function fetchDeliverySlips() {
   deliverySlips = [];
   importedSlipKeys = new Set();
+  manualSlipKeys = new Set();
   try {
     const snap = await getDocs(collection(db, 'delivery_history'));
     const bySlip = {};
@@ -7294,7 +7300,7 @@ async function fetchDeliverySlips() {
     deliverySlips = Object.values(bySlip).sort((a,b) => b.date.localeCompare(a.date));
 
     const impSnap = await getDocs(collection(db, 'delivery_imports'));
-    impSnap.forEach(d => importedSlipKeys.add(d.id));
+    impSnap.forEach(d => { importedSlipKeys.add(d.id); if (d.data().manual) manualSlipKeys.add(d.id); });
   } catch(e) {
     console.warn('納品書データ取得エラー:', e.message);
   }
@@ -7329,18 +7335,57 @@ function renderDeliveryImportStep1() {
       html += `<label style="display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--cream-dark);border-radius:6px;margin-bottom:4px;cursor:${done?'default':'pointer'};background:${done?'var(--cream)':'white'};">
         <input type="checkbox" ${checked?'checked':''} ${done?'disabled':''} onchange="diToggleSlip('${s.slipKey}',this.checked)">
         <span style="font-size:12px;flex:1;">伝票 ${s.slip_no}${s.subject?' / '+s.subject:''} — ${s.rows.length}点</span>
-        ${done?'<span style="font-size:10px;color:var(--success);">✅ 取り込み済み</span>':''}
+        ${done?(manualSlipKeys.has(s.slipKey)?'<span style="font-size:10px;color:var(--success);">✅ 済み（手で入れた分）</span>':'<span style="font-size:10px;color:var(--success);">✅ 取り込み済み</span>'):''}
       </label>`;
     });
     html += `</div>`;
   });
   html += `</div>
-    <div class="flex-gap" style="margin-top:12px;">
+    <div class="flex-gap" style="margin-top:12px;flex-wrap:wrap;">
       <button class="btn btn-gold" onclick="diGoToStep2()">次へ（内容を確認）</button>
+      <button class="btn btn-outline" onclick="diMarkManualDone()" title="昔、手で在庫に入れた伝票など。在庫・オーダー中の数は変えません">✋ 選んだ伝票を「手で入れた分」として済みにする（在庫は変えない）</button>
     </div>`;
   body.innerHTML = html;
 }
 window.renderDeliveryImportStep1 = renderDeliveryImportStep1;
+
+// 選んだ伝票を、在庫を変えずに「済み」にする（昔、手で在庫に入れた伝票用。v2026.11.16-78）
+async function diMarkManualDone() {
+  const keys = [...diCheckedSlips].filter(k => !importedSlipKeys.has(k));
+  if (!keys.length) { toast('済みにする伝票を選んでください', 'error'); return; }
+  const slips = keys.map(k => deliverySlips.find(s => s.slipKey === k)).filter(Boolean);
+  const list = slips.map(s => `・${s.date} 伝票${s.slip_no}（${s.rows.length}点）`).join('\n');
+  if (!confirm(`次の${slips.length}枚の伝票を「手で入れた分」として済みにします。\n在庫とオーダー中の数は変わりません。\n\n${list}\n\nよろしいですか？`)) return;
+  let ok = 0;
+  for (const s of slips) {
+    try {
+      await setDoc(doc(db, 'delivery_imports', s.slipKey), {
+        slip_no: s.slip_no, date: s.date, importedAt: new Date().toISOString(),
+        rowCount: s.rows.length, groups: [], manual: true
+      });
+      importedSlipKeys.add(s.slipKey);
+      manualSlipKeys.add(s.slipKey);
+      ok++;
+    } catch(e) { console.warn('済みにする記録エラー:', e.message); }
+  }
+  diCheckedSlips = new Set();
+  renderDeliveryImportStep1();
+  toast(`${ok}枚の伝票を「手で入れた分」として済みにしました（在庫は変えていません）`, ok === slips.length ? 'success' : 'error');
+}
+window.diMarkManualDone = diMarkManualDone;
+
+// 「手で入れた分」として済みにしたのを取り消す（在庫は変わらない）
+async function diUndoManualDone(id) {
+  if (!confirm('この伝票の「済み」を取り消して、未取り込みに戻しますか？（在庫は変わりません）')) return;
+  try {
+    await deleteDoc(doc(db, 'delivery_imports', id));
+    importedSlipKeys.delete(id);
+    manualSlipKeys.delete(id);
+    toast('未取り込みに戻しました', 'success');
+  } catch(e) { toast('取り消しに失敗しました：' + e.message, 'error'); return; }
+  await renderDeliveryImportHistory();
+}
+window.diUndoManualDone = diUndoManualDone;
 
 function diToggleSlip(key, checked) {
   if (checked) diCheckedSlips.add(key); else diCheckedSlips.delete(key);
